@@ -2,7 +2,7 @@
   <a-layout style="height: 100vh;">
     <!-- Sidebar -->
     <a-layout-sider width="300" theme="light" >
-      <div style="padding: 10px; font-weight: bold; font-size: 18px;">Rehber</div>
+      <div style="padding: 10px; font-weight: bold; font-size: 18px;">Kişiler</div>
       <a-menu
       :selectedKeys="selectedUser ? [selectedUser.id] : []"
       @click="handleSelectUser"
@@ -60,43 +60,150 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import SockJS from 'sockjs-client/dist/sockjs'
+import { Client } from '@stomp/stompjs'
 
-const users = ref([
-  {
-    id: '1',
-    name: 'Ayşe Yılmaz',
-    avatar: 'https://xsgames.co/randomusers/assets/avatars/female/1.jpg',
-    lastMessage: 'Nasılsın?',
-    messages: ['Merhaba!', 'Nasılsın?']
-  },
-  {
-    id: '2',
-    name: 'Mehmet Demir',
-    avatar: 'https://xsgames.co/randomusers/assets/avatars/male/2.jpg',
-    lastMessage: 'Yarın görüşelim mi?',
-    messages: ['Selam!', 'Yarın görüşelim mi?']
-  },
-  {
-    id: '3',
-    name: 'Zeynep Kaya',
-    avatar: 'https://xsgames.co/randomusers/assets/avatars/female/3.jpg',
-    lastMessage: 'Tamamdır.',
-    messages: ['Bugün işim var.', 'Tamamdır.']
-  }
-])
+const API_BASE = 'http://localhost:8080/api'
 
+const users = ref([])
 const selectedUser = ref(null)
 const newMessage = ref('')
+const loading = ref(true)
+const error = ref(null)
+
+const stomp = ref(null)
+const connected = ref(false)
+
+const buildName = (u) => {
+  const full = [u.firstName, u.lastName].filter(Boolean).join(' ')
+  return full || u.username || u.email || `Kullanıcı #${u.id}`
+}
+const makeAvatar = (u) =>
+  `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(buildName(u))}`
+
+onMounted(async () => {
+  const token = localStorage.getItem('jwtToken')
+  const commonHeaders = { Authorization: token ? `Bearer ${token}` : undefined }
+
+  try {
+    const [meRes, listRes] = await Promise.all([
+      fetch(`${API_BASE}/user`, { headers: commonHeaders }),
+      fetch(`${API_BASE}/users`, { headers: commonHeaders })
+    ])
+
+    const me = meRes.ok ? await meRes.json() : null
+    if (!listRes.ok) throw new Error(`Kişiler yüklenemedi (HTTP ${listRes.status})`)
+    const list = await listRes.json()
+    if (me?.id != null) localStorage.setItem('id', String(me.id))
+
+    // Giriş yapan kişiyi rehberden çıkar
+    const filtered = list.filter(u => {
+      if (!me) return true
+      if (me.id != null && u.id === me.id) return false
+      if (me.keycloakId && u.keycloakId && u.keycloakId === me.keycloakId) return false
+      if (me.username && u.username && u.username === me.username) return false
+      return true
+    })
+
+    users.value = filtered.map(u => ({
+      id: String(u.id),
+      name: buildName(u),
+      avatar: makeAvatar(u),
+      lastMessage: '',
+      messages: [] // buraya string listesi tutuyoruz (basit)
+    }))
+
+    // ---- WS'ye bağlan ----
+    await connectWs()
+  } catch (e) {
+    error.value = e.message || String(e)
+    console.error(e)
+  } finally {
+    loading.value = false
+  }
+})
+
+onBeforeUnmount(() => {
+  if (stomp.value?.active) stomp.value.deactivate()
+})
+
+async function connectWs () {
+  const token = localStorage.getItem('jwtToken')
+  if (!token) {
+    console.warn('JWT yok; WS bağlanmadı')
+    return
+  }
+
+  const url = `http://localhost:8080/ws?access_token=${encodeURIComponent(token)}`
+  const client = new Client({
+    webSocketFactory: () => new SockJS(url),
+    reconnectDelay: 5000,           // otomatik yeniden bağlan
+    heartbeatIncoming: 10000,
+    heartbeatOutgoing: 10000,
+    debug: (msg) => console.log('[STOMP]', msg)
+  })
+
+  client.onConnect = () => {
+    connected.value = true
+    // Kişisel kuyruğuna abone ol
+    client.subscribe('/user/queue/messages', (frame) => {
+      try {
+        const payload = JSON.parse(frame.body) // { fromUserId, content, ts }
+        const fromId = String(payload.fromUserId)
+        const text = String(payload.content ?? '')
+
+        const u = users.value.find(x => x.id === fromId)
+        if (u) {
+          u.messages.push(text)
+          u.lastMessage = text
+          // Şu anda açık konuşma bu kişi ise ekranda da görünür
+        } else {
+          // Rehberde yoksa istersen ekleyebilirsin
+          console.warn('Mesaj gelen kullanıcı rehberde yok:', fromId, payload)
+        }
+      } catch (err) {
+        console.error('Mesaj parse edilemedi', err, frame.body)
+      }
+    })
+  }
+
+  client.onStompError = (frame) => {
+    console.error('STOMP error', frame.headers, frame.body)
+  }
+  client.onWebSocketError = (e) => {
+    console.error('WS error', e)
+  }
+
+  stomp.value = client
+  client.activate()
+}
 
 const handleSelectUser = ({ key }) => {
   selectedUser.value = users.value.find(user => user.id === key)
 }
 
 const sendMessage = () => {
-  if (!newMessage.value.trim()) return
-  selectedUser.value.messages.push(newMessage.value)
-  selectedUser.value.lastMessage = newMessage.value
+  if (!newMessage.value.trim() || !selectedUser.value) return
+  const text = newMessage.value
+
+  // UI’yi hemen güncelle (optimistic)
+  selectedUser.value.messages.push(text)
+  selectedUser.value.lastMessage = text
   newMessage.value = ''
+
+  // STOMP ile backend’e gönder
+  if (stomp.value?.connected) {
+    stomp.value.publish({
+      destination: '/app/chat.send',
+      body: JSON.stringify({
+        toUserId: selectedUser.value.id,
+        content: text
+      })
+    })
+  } else {
+    console.warn('STOMP bağlı değil; mesaj gönderilemedi.')
+  }
 }
 </script>
+ 

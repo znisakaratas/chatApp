@@ -27,27 +27,50 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import UserRow from '../components/UserRow.vue' 
 
 const activeTab = ref('users')
 
-const users = ref([
-  {
-    id: 1,
-    name: 'Ayşe Yılmaz',
-    email: 'ayse@example.com',
-    role: 'Admin',
-    avatar: 'https://xsgames.co/randomusers/assets/avatars/female/1.jpg'
-  },
-  {
-    id: 2,
-    name: 'Mehmet Demir',
-    email: 'mehmet@example.com',
-    role: 'User',
-    avatar: 'https://xsgames.co/randomusers/assets/avatars/male/2.jpg'
+const API_BASE = 'http://localhost:8080/api'  
+const users = ref([])
+const selectedUser = ref(null)
+const newMessage = ref('')
+const loading = ref(true)
+const error = ref(null)
+const buildName = (u) => {
+  const full = [u.firstName, u.lastName].filter(Boolean).join(' ')
+  return full || u.username || u.email || `Kullanıcı #${u.id}`
+}
+const makeAvatar = (u) =>
+  `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(buildName(u))}`
+
+onMounted(async () => {
+  try {
+    const res = await fetch(`${API_BASE}/users`, {
+      headers: { 
+        'Authorization': `Bearer ${localStorage.getItem('jwtToken')}`
+      }
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    const data = await res.json()
+    // UI’nin beklediği shape’e çevir: messages/lastMessage alanları UI içindir
+    users.value = data.map(u => ({
+      id: String(u.id),
+      name: buildName(u),
+      avatar: makeAvatar(u),
+      lastMessage: '',
+      messages: []
+    }))
+
+  } catch (e) {
+    error.value = e.message || String(e)
+    console.error(e)
+  } finally {
+    loading.value = false
   }
-])
+})
 
 const columns = [
   {
