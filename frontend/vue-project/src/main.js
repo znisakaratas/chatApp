@@ -20,10 +20,18 @@ keycloak.init(keycloakInitOptions).then(async (authenticated) => {
 
   try {
     const { data } = await api.get('/user')
+
+    if (data.status !== 'ACTIVE') {
+      console.warn('Kullanıcı aktif değil, giriş engellendi')
+      app.config.globalProperties.$toast?.error?.('Hesabınız aktif değil!') 
+      const logoutUrl = keycloak.createLogoutUrl({ redirectUri: window.location.origin })
+      window.location.href = logoutUrl
+      return
+    }
     const currentUser = reactive(data)
+    console.log(data.status, "go kylie go")
     app.provide('currentUser', currentUser)
-  
-    await router.push(currentUser.role === 'admin' ? '/admin' : '/')
+    await router.push('/')
   } catch (e) {
     console.error('api/user failed', e)
     app.config.globalProperties.$toast?.error?.('Kullanıcı bilgisi alınamadı')

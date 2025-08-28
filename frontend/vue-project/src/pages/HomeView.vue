@@ -1,58 +1,47 @@
 <template>
-  <a-layout style="height: 100vh;">
-    <!-- Sidebar -->
-    <a-layout-sider width="300" theme="light" >
-      <div style="padding: 10px; font-weight: bold; font-size: 18px;">Kişiler</div>
-      <a-menu
-      :selectedKeys="selectedUser ? [selectedUser.id] : []"
-      @click="handleSelectUser"
-      style="padding-left: 0;"
-    >
-        <a-menu-item v-for="user in users" :key="user.id" :style="{ paddingLeft: '0px', height: '72px' }">
-          <a-avatar :src="user.avatar" :size="40" style="float: left; margin-right: 12px;" />
-          <div style="overflow: hidden;">
-            <div style="font-weight: 500;">{{ user.name }}</div>
-            <div style="color: gray; font-size: 12px;">{{ user.lastMessage }}</div>
+  <a-layout style="height:100vh">
+    <a-layout-sider width="300" theme="light">
+      <div style="padding:10px;font-weight:600;font-size:18px">Kişiler</div>
+      <a-menu :selectedKeys="selectedUser ? [selectedUser.id] : []" @click="handleSelectUser" style="padding-left:0">
+        <a-menu-item v-for="u in users" :key="u.id" :style="{ paddingLeft: '0px', height: '72px', position: 'relative' }">
+          <a-avatar :src="u.avatar" :size="40" style="float:left;margin-right:12px" />
+          <div style="overflow:hidden">
+            <div style="font-weight:500">{{ u.name }}</div>
+            <div style="color:gray;font-size:12px">{{ u.lastMessage }}</div>
           </div>
+          <!-- basit mavi rozet -->
+          <span v-if="u.unread > 0"
+            style="position:absolute; right:12px; top:8px; background:#1677ff; color:#fff; border-radius:999px;
+                       min-width:20px; height:20px; line-height:20px; text-align:center; font-size:12px; padding:0 6px; z-index:1;">
+            {{ u.unread }}
+          </span>
         </a-menu-item>
-
       </a-menu>
     </a-layout-sider>
 
-    <!-- Chat panel -->
-    <a-layout-content style="background: #f5f5f5;">
-      <div v-if="selectedUser" style="display: flex; flex-direction: column; height: 100%;">
-        <!-- Üst panel -->
-        <div style="padding: 16px; background: #fff; font-weight: bold; border-bottom: 1px solid #ddd;">
+    <a-layout-content style="background:#f5f5f5">
+      <div v-if="selectedUser" style="display:flex;flex-direction:column;height:100%">
+        <div style="padding:16px;background:#fff;font-weight:600;border-bottom:1px solid #ddd">
           {{ selectedUser.name }}
         </div>
 
-        <!-- Mesajlar -->
-        <div style="flex: 1; padding: 16px; overflow-y: auto;">
-          <div v-for="(msg, index) in selectedUser.messages" :key="index" style="margin-bottom: 8px;">
-            <div style="background: #fff; padding: 8px 12px; border-radius: 8px; max-width: 60%;">
-              {{ msg }}
+        <div ref="scrollPane" style="flex:1;padding:16px;overflow-y:auto">
+          <div v-for="(m, i) in selectedUser.messages" :key="m.id || i" style="margin-bottom:8px;display:flex"
+            :style="{ justifyContent: isMine(m) ? 'flex-end' : 'flex-start' }">
+            <div style="background:#fff;padding:8px 12px;border-radius:8px;max-width:70%">
+              <div>{{ m.content }}</div>
+              <div style="color:#999;font-size:11px;margin-top:4px">{{ fmtTime(m.createdAt) }}</div>
             </div>
           </div>
         </div>
 
-        <!-- Mesaj yazma alanı -->
-        <div style="
-    position: fixed;
-    bottom: 0;
-    right: 0;
-    left: 300px; /* Sidebar genişliği kadar */
-    background: #fff;
-    padding: 12px 24px;
-    border-top: 1px solid #ddd;
-    z-index: 100;
-  ">
+        <div style="position:sticky;bottom:0;background:#fff;padding:12px 24px;border-top:1px solid #ddd;z-index:10">
           <a-input-search v-model:value="newMessage" placeholder="Mesaj yaz..." enter-button="Gönder"
             @search="sendMessage" />
         </div>
-
       </div>
-      <div v-else style="display: flex; justify-content: center; align-items: center; height: 100%;">
+
+      <div v-else style="display:flex;justify-content:center;align-items:center;height:100%">
         <p>Lütfen bir kişi seçin.</p>
       </div>
     </a-layout-content>
@@ -60,20 +49,66 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import SockJS from 'sockjs-client/dist/sockjs'
 import { Client } from '@stomp/stompjs'
-
+const windowFocused = ref(typeof document !== 'undefined' ? document.hasFocus() : true)
+const pageVisible   = ref(typeof document !== 'undefined' ? document.visibilityState === 'visible' : true)
+function isPeerOpen(peerId) {
+  // sohbet gerçekten “görülür” kabul edilsin: seçili + odak + görünür
+  return !!selectedUser.value
+    && selectedUser.value.id === peerId
+    && windowFocused.value
+    && pageVisible.value
+}
 const API_BASE = 'http://localhost:8080/api'
+const WS_URL = 'http://localhost:8080/ws'
+const MSG_LIMIT = 50
 
-const users = ref([])
+const users = ref([])           // { id, name, avatar, lastMessage, messages:[], unread }
+const meId = ref(null)
 const selectedUser = ref(null)
 const newMessage = ref('')
-const loading = ref(true)
-const error = ref(null)
-
 const stomp = ref(null)
-const connected = ref(false)
+const scrollPane = ref(null)
+const LAST_SEEN_KEY = 'chat_last_seen_ms'
+function getLastSeen() { return Number(localStorage.getItem(LAST_SEEN_KEY) || 0) }
+function setLastSeen(ms = Date.now()) { localStorage.setItem(LAST_SEEN_KEY, String(ms)) }
+
+// peerId -> Set(messageId)
+const seenIdsByPeer = ref(new Map())
+
+// localStorage'da okunma zamanı
+const READ_KEY = 'chat_last_read_at' // JSON: { [peerId]: epochMs }
+function getReadMap() {
+  try { return JSON.parse(localStorage.getItem(READ_KEY) || '{}') } catch { return {} }
+}
+function saveReadMap(map) {
+  localStorage.setItem(READ_KEY, JSON.stringify(map))
+}
+const readMapRef = ref(getReadMap())
+
+function lastMessageTs(peer) {
+  return peer.messages.length ? peer.messages[peer.messages.length - 1].createdAt : 0
+}
+
+function computeUnread(peer) {
+  const lastRead = Number(readMapRef.value[peer.id] ?? 0)
+  const me = String(meId.value)
+  return peer.messages.filter(m =>
+    String(m.toUserId) === me && Number(m.createdAt) > lastRead
+  ).length
+}
+
+function setLastRead(peerId, ts = Date.now()) {
+  const prev = Number(readMapRef.value[peerId] || 0)
+  // eşit zamanlı mesajlar kaçmasın diye -1ms
+  const safe = Math.max(prev, (ts))
+  readMapRef.value[peerId] = safe
+  saveReadMap(readMapRef.value)
+  const peer = users.value.find(u => u.id === peerId)
+  if (peer) peer.unread = computeUnread(peer)
+}
 
 const buildName = (u) => {
   const full = [u.firstName, u.lastName].filter(Boolean).join(' ')
@@ -82,128 +117,272 @@ const buildName = (u) => {
 const makeAvatar = (u) =>
   `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(buildName(u))}`
 
+const authHeaders = () => {
+  const t = localStorage.getItem('jwtToken')
+  return t ? { Authorization: `Bearer ${t}` } : {}
+}
+let onBye
 onMounted(async () => {
-  const token = localStorage.getItem('jwtToken')
-  const commonHeaders = { Authorization: token ? `Bearer ${token}` : undefined }
-
   try {
     const [meRes, listRes] = await Promise.all([
-      fetch(`${API_BASE}/user`, { headers: commonHeaders }),
-      fetch(`${API_BASE}/users`, { headers: commonHeaders })
+      fetch(`${API_BASE}/user`, { headers: authHeaders() }),
+      fetch(`${API_BASE}/users`, { headers: authHeaders() })
     ])
-
     const me = meRes.ok ? await meRes.json() : null
-    if (!listRes.ok) throw new Error(`Kişiler yüklenemedi (HTTP ${listRes.status})`)
-    const list = await listRes.json()
-    if (me?.id != null) localStorage.setItem('id', String(me.id))
+    if (me?.id != null) {
+      meId.value = String(me.id)
+      localStorage.setItem('id', meId.value)
+    }
 
-    // Giriş yapan kişiyi rehberden çıkar
-    const filtered = list.filter(u => {
-      if (!me) return true
-      if (me.id != null && u.id === me.id) return false
-      if (me.keycloakId && u.keycloakId && u.keycloakId === me.keycloakId) return false
-      if (me.username && u.username && u.username === me.username) return false
-      return true
-    })
-
+    const list = listRes.ok ? await listRes.json() : []
+    const filtered = list.filter(u => !me || String(u.id) !== String(me.id))
     users.value = filtered.map(u => ({
       id: String(u.id),
       name: buildName(u),
       avatar: makeAvatar(u),
       lastMessage: '',
-      messages: [] // buraya string listesi tutuyoruz (basit)
+      messages: [],
+      unread: 0,
+      lastTs: 0
     }))
 
-    // ---- WS'ye bağlan ----
+    await loadAllHistories()
+
     await connectWs()
+    onBye = () => setLastSeen(Date.now())
+    window.addEventListener('beforeunload', onBye)
+    const onFocus = () => (windowFocused.value = true)
+    const onBlur = () => (windowFocused.value = false)
+    const onVis = () => (pageVisible.value = document.visibilityState === 'visible')
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVis)
+    cleanup.push(() => {
+    window.removeEventListener('focus', onFocus)
+    window.removeEventListener('blur', onBlur)
+    document.removeEventListener('visibilitychange', onVis)
+    })
   } catch (e) {
-    error.value = e.message || String(e)
-    console.error(e)
-  } finally {
-    loading.value = false
+    console.error('init error', e)
   }
 })
-
+const cleanup = []
 onBeforeUnmount(() => {
+  if (onBye) window.removeEventListener('beforeunload', onBye)
   if (stomp.value?.active) stomp.value.deactivate()
+  cleanup.forEach(fn => { try { fn() } catch {} })
 })
+
+async function loadAllHistories() {
+  const readMap = readMapRef.value
+  const lastSeen = getLastSeen()
+
+  for (const u of users.value) {
+    await loadHistory(u.id)
+
+    if (readMap[u.id] == null && lastSeen > 0) {
+      readMap[u.id] = lastSeen
+    }
+    u.lastTs = lastMessageTs(u) || 0
+    u.unread = computeUnread(u)
+
+  }
+  saveReadMap(readMap)
+  sortUserList()
+}
+
+
+async function loadHistory(peerId) {
+  const res = await fetch(`${API_BASE}/messages?peerId=${encodeURIComponent(peerId)}&limit=${MSG_LIMIT}`, {
+    headers: authHeaders()
+  })
+  if (!res.ok) return
+  const list = await res.json() // [{id,fromUserId,toUserId,content,createdAt}]
+  const peer = users.value.find(u => u.id === String(peerId))
+  if (!peer) return
+
+  const set = seenIdsByPeer.value.get(peer.id) ?? new Set()
+  for (const x of list) {
+    const msg = {
+      id: String(x.id ?? `${x.fromUserId}|${x.toUserId}|${x.createdAt}|${x.content ?? ''}`),
+      fromUserId: String(x.fromUserId),
+      toUserId: String(x.toUserId ?? ''),
+      content: String(x.content ?? ''),
+      createdAt: toMillis(x.createdAt)
+    }
+    if (set.has(msg.id)) continue
+    set.add(msg.id)
+    peer.messages.push(msg)
+  }
+  seenIdsByPeer.value.set(peer.id, set)
+
+  // son mesaj metnini güncelle
+  peer.lastMessage = peer.messages.at(-1)?.content ?? ''
+  peer.lastTs = lastMessageTs(peer) || 0
+  peer.unread = computeUnread(peer)
+
+}
 
 async function connectWs () {
   const token = localStorage.getItem('jwtToken')
-  if (!token) {
-    console.warn('JWT yok; WS bağlanmadı')
-    return
-  }
+  if (!token) return
 
-  const url = `http://localhost:8080/ws?access_token=${encodeURIComponent(token)}`
   const client = new Client({
-    webSocketFactory: () => new SockJS(url),
-    reconnectDelay: 5000,           // otomatik yeniden bağlan
+    webSocketFactory: () => new SockJS(`${WS_URL}?access_token=${encodeURIComponent(token)}`),
+    reconnectDelay: 5000,
     heartbeatIncoming: 10000,
     heartbeatOutgoing: 10000,
     debug: (msg) => console.log('[STOMP]', msg)
   })
 
   client.onConnect = () => {
-    connected.value = true
-    // Kişisel kuyruğuna abone ol
-    client.subscribe('/user/queue/messages', (frame) => {
-      try {
-        const payload = JSON.parse(frame.body) // { fromUserId, content, ts }
-        const fromId = String(payload.fromUserId)
-        const text = String(payload.content ?? '')
+    client.subscribe('/user/queue/messages', async (frame) => {
+      let payload
+      try { payload = JSON.parse(frame.body) } catch { return }
 
-        const u = users.value.find(x => x.id === fromId)
-        if (u) {
-          u.messages.push(text)
-          u.lastMessage = text
-          // Şu anda açık konuşma bu kişi ise ekranda da görünür
-        } else {
-          // Rehberde yoksa istersen ekleyebilirsin
-          console.warn('Mesaj gelen kullanıcı rehberde yok:', fromId, payload)
+      const fromId = String(payload.fromUserId)
+      const toId   = String(payload.toUserId)
+      const ts     = toMillis(payload.createdAt)
+      const mid    = String(payload.id ?? `${fromId}|${toId}|${ts}|${payload.content ?? ''}`)
+
+      // Hangi sohbet?
+      const peerId = (fromId === meId.value) ? toId : fromId
+
+      // Peer hazırla (yoksa oluştur)
+      let peer = users.value.find(u => u.id === peerId)
+      if (!peer) {
+        peer = {
+          id: peerId,
+          name: `Kullanıcı #${peerId}`,
+          avatar: makeAvatar({ firstName: '?', lastName: peerId }),
+          lastMessage: '',
+          messages: [],
+          unread: 0,
+          lastTs: 0
         }
-      } catch (err) {
-        console.error('Mesaj parse edilemedi', err, frame.body)
+        users.value.unshift(peer)
       }
+
+      // Dedup
+      const set = seenIdsByPeer.value.get(peer.id) ?? new Set()
+      if (set.has(mid)) return
+      set.add(mid)
+      seenIdsByPeer.value.set(peer.id, set)
+
+      // Mesajı ekle
+      const msg = { id: mid, fromUserId: fromId, toUserId: toId, content: String(payload.content ?? ''), createdAt: ts }
+      peer.messages.push(msg)
+      peer.lastMessage = msg.content
+      peer.lastTs = ts
+
+      // --- ROZET KURALI (tek yer) ---
+      const isIncoming = (toId === meId.value)
+      if (isIncoming) {
+        const openNow = isPeerOpen(peer.id) // seçili + fokus + visible
+        if (openNow) {
+          // sohbet ekranda → okundu
+          setLastRead(peer.id, ts)
+          peer.unread = 0
+        } else {
+          // sohbet kapalı → rozet +1 (MANUEL)
+          peer.unread = (peer.unread || 0) + 1
+        }
+      }
+      // NOT: Outgoing için unread değiştirmiyoruz
+
+      // Listeyi güncelle
+      bumpPeerTop(peer, ts)
+      sortUserList()
+
+      // Açık pencere ise aşağı kaydır
+      if (selectedUser.value?.id === peer.id) await scrollBottom()
     })
   }
 
-  client.onStompError = (frame) => {
-    console.error('STOMP error', frame.headers, frame.body)
-  }
-  client.onWebSocketError = (e) => {
-    console.error('WS error', e)
-  }
+  client.onStompError    = (f) => console.error('STOMP error', f.headers, f.body)
+  client.onWebSocketError = (e) => console.error('WS error', e)
 
   stomp.value = client
   client.activate()
 }
 
-const handleSelectUser = ({ key }) => {
-  selectedUser.value = users.value.find(user => user.id === key)
+
+const handleSelectUser = async ({ key }) => {
+  const peer = users.value.find(u => u.id === key)
+  if (!peer) return
+  selectedUser.value = peer;
+
+  if (peer.messages.length === 0) {
+    await loadHistory(peer.id)
+  }
+  await scrollBottom()
+  // kritik: okundu zamanını son mesaja çek → kalıcı
+  const ts = lastIncomingTs(peer) || lastMessageTs(peer) || Date.now()
+  setLastRead(peer.id, ts)
+  peer.unread = 0
+  sortUserList()
+
+}
+
+// === helpers ===
+function sortUserList() {
+  users.value = [...users.value].sort((a, b) => {
+    const ua = (a.unread || 0) > 0 ? 1 : 0
+    const ub = (b.unread || 0) > 0 ? 1 : 0
+    if (ua !== ub) return ub - ua
+    const ta = a.lastTs ?? lastMessageTs(a) ?? 0
+    const tb = b.lastTs ?? lastMessageTs(b) ?? 0
+    return tb - ta
+  })
+}
+
+function bumpPeerTop(peer, ts) {
+  peer.lastTs = ts ?? lastMessageTs(peer) ?? Date.now()
+  const idx = users.value.findIndex(u => u.id === peer.id)
+  if (idx > -1) {
+    users.value.splice(idx, 1)
+    users.value.unshift(peer)
+  }
 }
 
 const sendMessage = () => {
   if (!newMessage.value.trim() || !selectedUser.value) return
   const text = newMessage.value
-
-  // UI’yi hemen güncelle (optimistic)
-  selectedUser.value.messages.push(text)
-  selectedUser.value.lastMessage = text
   newMessage.value = ''
 
-  // STOMP ile backend’e gönder
+  // optimistic yok → WS echo ile gelecek
   if (stomp.value?.connected) {
     stomp.value.publish({
       destination: '/app/chat.send',
-      body: JSON.stringify({
-        toUserId: selectedUser.value.id,
-        content: text
-      })
+      body: JSON.stringify({ toUserId: selectedUser.value.id, content: text })
     })
   } else {
-    console.warn('STOMP bağlı değil; mesaj gönderilemedi.')
+    console.warn('STOMP bağlı değil')
   }
 }
+function lastIncomingTs(peer) {
+  const me = String(meId.value)
+  let t = 0
+  for (const m of peer.messages) {
+    if (String(m.toUserId) === me) t = Math.max(t, Number(m.createdAt) || 0)
+  }
+  return t
+}
+
+function isMine(m) { return String(m.fromUserId) === String(meId.value) }
+function fmtTime(ms) {
+  if (!ms) return ''
+  const d = new Date(ms)
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+function toMillis(v) {
+  if (!v) return Date.now()
+  if (typeof v === 'number') return v
+  const t = Date.parse(v); return Number.isNaN(t) ? Date.now() : t
+}
+async function scrollBottom() {
+  await nextTick()
+  const el = scrollPane.value
+  if (el) el.scrollTop = el.scrollHeight
+}
 </script>
- 

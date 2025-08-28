@@ -60,10 +60,15 @@ onMounted(async () => {
       id: String(u.id),
       name: buildName(u),
       avatar: makeAvatar(u),
+      email: u.email,
+      role: u.role ,
+      status: u.status,
+      username: u.username,
+      firstName: u.first_name,
+      lastName: u.last_name,
       lastMessage: '',
       messages: []
     }))
-
   } catch (e) {
     error.value = e.message || String(e)
     console.error(e)
