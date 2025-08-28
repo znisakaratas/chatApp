@@ -13,9 +13,11 @@
   },
   "dependencies": {
     "@heroicons/vue": "^2.2.0",
+    "@stomp/stompjs": "^7.1.1",
     "ant-design-vue": "^4.0.0-rc.6",
     "axios": "^1.11.0",
     "keycloak-js": "^26.2.0",
+    "sockjs-client": "^1.6.1",
     "vue": "^3.5.18",
     "vue-router": "^4.5.1",
     "vue-toastification": "^2.0.0-rc.5"
