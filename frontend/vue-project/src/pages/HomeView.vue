@@ -110,7 +110,8 @@ const API_BASE = 'http://localhost:8080/api'
 const WS_URL = 'http://localhost:8080/ws'
 const MSG_LIMIT = 50
 
-const users = ref([])           // { id, name, avatar, lastMessage, messages:[], unread }
+const users = ref([]) 
+const none_filtered_users = ref([])          // { id, name, avatar, lastMessage, messages:[], unread }
 const meId = ref(null)
 const selectedUser = ref(null)
 const newMessage = ref('')
@@ -180,6 +181,15 @@ onMounted(async () => {
     }
 
     const list = listRes.ok ? await listRes.json() : []
+    none_filtered_users.value = list.map(u => ({
+      id: String(u.id),
+      name: buildName(u),
+      avatar: makeAvatar(u),
+      lastMessage: '',
+      messages: [],
+      unread: 0,
+      lastTs: 0
+    }))
     const filtered = list.filter(u => !me || String(u.id) !== String(me.id))
     users.value = filtered.map(u => ({
       id: String(u.id),
@@ -211,6 +221,7 @@ onMounted(async () => {
     console.error('init error', e)
   }
 })
+
 const cleanup = []
 onBeforeUnmount(() => {
   if (onBye) window.removeEventListener('beforeunload', onBye)
@@ -449,8 +460,8 @@ const resetCreate = () => {
 
 const filteredUsers = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return users.value
-  return users.value.filter(u =>
+  if (!q) return none_filtered_users.value
+  return none_filtered_users.value.filter(u =>
     (u.name && u.name.toLowerCase().includes(q)) ||
     (u.username && String(u.username).toLowerCase().includes(q)) ||
     (u.email && String(u.email).toLowerCase().includes(q))
