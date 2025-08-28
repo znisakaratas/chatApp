@@ -17,8 +17,51 @@
           </span>
         </a-menu-item>
       </a-menu>
-    </a-layout-sider>
+      <div style="padding:10px;font-weight:600;font-size:18px">Gruplar
+        <a-button style="border: transparent; padding-left: 150px;" type="primary" ghost @click="openCreateGroup">+</a-button>
+      </div> 
+            
 
+      <a-menu>
+      </a-menu>
+    </a-layout-sider>
+    <a-modal
+      v-model:open="createOpen"
+      title="Create Group"
+      :confirmLoading="creating"
+      @ok="handleCreateGroup"
+      @cancel="resetCreate"
+      :okButtonProps="{ disabled: !groupName.trim() }"
+    >
+      <!-- Grup Adı (zorunlu) -->
+      <div style="margin-bottom:12px;">
+        <div style="font-weight:500;margin-bottom:6px;">Group Name <span style="color:#f5222d">*</span></div>
+        <a-input v-model:value="groupName" placeholder="e.g., Developers Team" allow-clear />
+      </div>
+
+      <!-- Arama -->
+      <div style="margin: 12px 0;">
+        <a-input-search
+          v-model:value="search"
+          placeholder="Search users by name/username/email"
+          allow-clear
+          @search="noop"
+        />
+      </div>
+
+      <!-- Kullanıcı Seçimi (opsiyonel) -->
+      <a-table
+        :data-source="filteredUsers"
+        :columns="selectColumns"
+        :rowSelection="rowSelection"
+        :pagination="{ pageSize: 5 }"
+        row-key="id"
+        size="small"
+      />
+      <div style="margin-top:8px; font-size:12px; color:#888;">
+        {{ selectedIds.length }} user selected (optional)
+      </div>
+    </a-modal>
     <a-layout-content style="background:#f5f5f5">
       <div v-if="selectedUser" style="display:flex;flex-direction:column;height:100%">
         <div style="padding:16px;background:#fff;font-weight:600;border-bottom:1px solid #ddd">
@@ -49,9 +92,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick,computed } from 'vue'
 import SockJS from 'sockjs-client/dist/sockjs'
-import { Client } from '@stomp/stompjs'
+import { Client } from '@stomp/stompjs'  
+import { message } from 'ant-design-vue'
+import api from '@/api'
 const windowFocused = ref(typeof document !== 'undefined' ? document.hasFocus() : true)
 const pageVisible   = ref(typeof document !== 'undefined' ? document.visibilityState === 'visible' : true)
 function isPeerOpen(peerId) {
@@ -315,8 +360,7 @@ const handleSelectUser = async ({ key }) => {
   if (peer.messages.length === 0) {
     await loadHistory(peer.id)
   }
-  await scrollBottom()
-  // kritik: okundu zamanını son mesaja çek → kalıcı
+  await scrollBottom() 
   const ts = lastIncomingTs(peer) || lastMessageTs(peer) || Date.now()
   setLastRead(peer.id, ts)
   peer.unread = 0
@@ -384,5 +428,66 @@ async function scrollBottom() {
   await nextTick()
   const el = scrollPane.value
   if (el) el.scrollTop = el.scrollHeight
+}
+/* ---------- Create Group Modal state ---------- */
+const createOpen = ref(false)
+const creating = ref(false)
+const groupName = ref('')
+const search = ref('')
+const selectedIds = ref([])
+
+const openCreateGroup = () => {
+  createOpen.value = true
+}
+
+const resetCreate = () => {
+  groupName.value = ''
+  search.value = ''
+  selectedIds.value = []
+  createOpen.value = false
+}
+
+const filteredUsers = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return users.value
+  return users.value.filter(u =>
+    (u.name && u.name.toLowerCase().includes(q)) ||
+    (u.username && String(u.username).toLowerCase().includes(q)) ||
+    (u.email && String(u.email).toLowerCase().includes(q))
+  )
+})
+
+const selectColumns = [
+  { title: 'Name', dataIndex: 'name' },
+  { title: 'Username', dataIndex: 'username' },
+  { title: 'Email', dataIndex: 'email' }
+]
+
+const rowSelection = {
+  selectedRowKeys: selectedIds,
+  onChange: (keys) => { selectedIds.value = keys }
+}
+
+const noop = () => {}
+
+const handleCreateGroup = async () => {
+  const name = groupName.value.trim()
+  if (!name) return
+  creating.value = true
+  try {
+    const { data } = await api.post('/group', {
+      name,
+      userIds: selectedIds.value.map(id => Number(id)) // backend Long bekliyor
+    })
+    message.success(`Group ${data.name} succesfully created `)
+    resetCreate()
+    // İstersen burada grup listesini yeniletebilirsin
+  } catch (e) {
+    console.error(e)
+    const msg = e?.response?.data?.message || 'Failed to create group'
+    message.error(msg)
+  } finally {
+    creating.value = false
+  }
 }
 </script>

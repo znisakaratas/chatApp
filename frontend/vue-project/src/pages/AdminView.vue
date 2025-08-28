@@ -4,6 +4,7 @@
     <div style="margin-bottom: 16px;">
       <a-button type="primary" @click="activeTab = 'users'" style="margin-right: 8px;">Kullanıcı Listesi</a-button>
       <a-button @click="activeTab = 'groups'">Grup Listesi</a-button>
+
     </div>
 
     <!-- Kullanıcı Tablosu -->
@@ -23,12 +24,13 @@
     <div v-else>
       <p>Grup listesi buraya gelecek...</p>
     </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import UserRow from '../components/UserRow.vue' 
+import UserRow from '../components/UserRow.vue'  
 
 const activeTab = ref('users')
 
@@ -84,5 +86,7 @@ const columns = [
     dataIndex: 'customRow'
   }
 ]
+
   
-</script>
+</script> 
+ 
