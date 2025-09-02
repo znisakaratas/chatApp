@@ -20,10 +20,27 @@
       <div style="padding:10px;font-weight:600;font-size:18px">Gruplar
         <a-button style="border: transparent; padding-left: 150px;" type="primary" ghost @click="openCreateGroup">+</a-button>
       </div> 
-            
+      <a-menu
+  :selectedKeys="selectedGroup ? [String(selectedGroup.id)] : []"
+  @click="handleSelectGroup"
+  style="padding-left:0"
+>
+  <a-menu-item
+    v-for="g in groups"
+    :key="String(g.id)"
+    :style="{ position:'relative' }"
+  >
+    <div class="group-item">
+      <div class="title">{{ g.name }}</div>
+      <div class="sub">{{ g.lastMessage || ' ' }}</div>
+    </div>
 
-      <a-menu>
-      </a-menu>
+    <span v-if="g.unread > 0" class="badge">
+      {{ g.unread }}
+    </span>
+  </a-menu-item>
+</a-menu>
+
     </a-layout-sider>
     <a-modal
       v-model:open="createOpen"
@@ -63,16 +80,38 @@
       </div>
     </a-modal>
     <a-layout-content style="background:#f5f5f5">
-      <div v-if="selectedUser" style="display:flex;flex-direction:column;height:100%">
+      <div v-if="selectedUser" style="display: flex;flex-direction:column;height:100%">
         <div style="padding:16px;background:#fff;font-weight:600;border-bottom:1px solid #ddd">
-          {{ selectedUser.name }}
-        </div>
-
+        {{ selectedUser.name }}
+          <template v-if="selectedUser?.id?.startsWith?.('group:')">
+          <a-dropdown trigger="click">
+            <a-button shape="circle">
+              <template #icon><EllipsisOutlined /></template>
+            </a-button>
+            <template #overlay>
+              <a-menu>
+                <a-menu-item @click="openMembersView">Kişileri Görüntüle</a-menu-item>
+                <a-menu-item @click="openPerms">Roller &amp; İzinler</a-menu-item>
+                <a-menu-divider />
+                <a-menu-item v-if="groupPerms.canUpdate" @click="openEditGroup">Grubu Düzenle</a-menu-item>
+                <a-menu-item v-if="groupPerms.canDelete" danger @click="confirmDeleteGroup">Grubu Sil</a-menu-item>
+              </a-menu>
+            </template>
+              </a-dropdown>
+            </template>
+       </div>
         <div ref="scrollPane" style="flex:1;padding:16px;overflow-y:auto">
           <div v-for="(m, i) in selectedUser.messages" :key="m.id || i" style="margin-bottom:8px;display:flex"
             :style="{ justifyContent: isMine(m) ? 'flex-end' : 'flex-start' }">
             <div style="background:#fff;padding:8px 12px;border-radius:8px;max-width:70%">
-              <div>{{ m.content }}</div>
+              <div v-if="isGroupId(selectedUser?.id)"
+                  style="font-weight:600;font-size:12px;margin-bottom:4px"
+                  :style="{ color: nameColor(m.fromUserId) }">
+                {{ userNameById(m.fromUserId) }}
+              </div>
+              <div style="white-space:pre-wrap; word-break:break-word;">
+                {{ m.content }}
+              </div>
               <div style="color:#999;font-size:11px;margin-top:4px">{{ fmtTime(m.createdAt) }}</div>
             </div>
           </div>
@@ -87,6 +126,98 @@
       <div v-else style="display:flex;justify-content:center;align-items:center;height:100%">
         <p>Lütfen bir kişi seçin.</p>
       </div>
+              
+<a-modal
+  v-model:open="membersViewOpen"
+  :title="`Grup: ${selectedGroup?.name || ''}`"
+  :footer="null"
+  destroyOnClose
+  :bodyStyle="{ maxHeight: '60vh', overflowY: 'auto' }"
+>
+  <a-list
+    v-if="selectedGroup?.memberIds?.length"
+    :data-source="selectedGroup.memberIds"
+    item-layout="horizontal"
+    bordered
+  >
+    <template #renderItem="{ item }">
+      <a-list-item>
+        <a-list-item-meta
+          :title="userNameById(item)"
+        />
+      </a-list-item>
+    </template>
+  </a-list>
+
+  <div v-else>-</div>
+</a-modal>
+
+        <a-modal v-model:open="editOpen"
+         title="Grubu Düzenle"
+         :confirmLoading="updating"
+         @ok="handleEditSave"
+         @cancel="resetEdit"
+         :okButtonProps="{ disabled: !editName.trim() }"
+         destroyOnClose>
+          <!-- Grup Adı -->
+          <div style="margin-bottom:12px;">
+            <div style="font-weight:500;margin-bottom:6px;">Group Name <span style="color:#f5222d">*</span></div>
+            <a-input v-model:value="editName" placeholder="Group name" allow-clear />
+          </div>
+
+          <!-- Arama -->
+          <div style="margin:12px 0;">
+            <a-input-search v-model:value="editSearch" placeholder="Search users" allow-clear />
+          </div>
+
+          <!-- Üye seçimi -->
+          <a-table
+            :data-source="editFilteredUsers"
+            :columns="[{title:'Name',dataIndex:'name'},{title:'Username',dataIndex:'username'},{title:'Email',dataIndex:'email'}]"
+            :rowSelection="editRowSelection"
+            :pagination="{ pageSize: 6 }"
+            row-key="id"
+            size="small"
+          />
+          <div style="margin-top:8px;font-size:12px;color:#888;">
+            {{ editSelectedIds.length }} kişi
+          </div>
+        </a-modal>
+<a-modal v-model:open="permsOpen" title="Roller & İzinler" :confirmLoading="permsSaving"
+         @ok="savePerms" ok-text="Kaydet" cancel-text="Kapat" width="800px"  :okButtonProps="{ disabled: !groupPerms.canGrant }" >
+  <div style="margin-bottom:12px">
+    <a-input-search v-model:value="permSearch" placeholder="Kullanıcı ara" allow-clear />
+  </div>
+
+  <a-table
+    :data-source="permFilteredRows"
+    :columns="permColumns"
+    :pagination="{ pageSize: 6 }"
+    row-key="userId"
+    size="small"
+  >
+    <template style="width: fit-content;" #bodyCell="{ column, record }">
+      <template v-if="column.key === 'name'">
+        {{ userNameById(record.userId) }}
+      </template>
+
+      <template  v-else-if="column.key === 'canUpdate'">
+        <a-switch v-model:checked="record.canUpdate" :disabled="isRowLocked(record.userId)" />
+      </template>
+
+      <template v-else-if="column.key === 'canDelete'">
+        <a-switch v-model:checked="record.canDelete" :disabled="isRowLocked(record.userId)" />
+      </template>
+
+      <template v-else-if="column.key === 'actions'">
+        <a-button size="small" danger @click="revokePerm(record)" :disabled="isRowLocked(record.userId)">
+          Yetkiyi Kaldır
+        </a-button>
+      </template>
+    </template>
+  </a-table>
+</a-modal>
+
     </a-layout-content>
   </a-layout>
 </template>
@@ -95,8 +226,10 @@
 import { ref, onMounted, onBeforeUnmount, nextTick,computed } from 'vue'
 import SockJS from 'sockjs-client/dist/sockjs'
 import { Client } from '@stomp/stompjs'  
-import { message } from 'ant-design-vue'
-import api from '@/api'
+import {Modal, message } from 'ant-design-vue'
+import api from '@/api' 
+import { EllipsisOutlined, TeamOutlined } from '@ant-design/icons-vue'
+ 
 const windowFocused = ref(typeof document !== 'undefined' ? document.hasFocus() : true)
 const pageVisible   = ref(typeof document !== 'undefined' ? document.visibilityState === 'visible' : true)
 function isPeerOpen(peerId) {
@@ -111,15 +244,255 @@ const WS_URL = 'http://localhost:8080/ws'
 const MSG_LIMIT = 50
 
 const users = ref([]) 
-const none_filtered_users = ref([])          // { id, name, avatar, lastMessage, messages:[], unread }
 const meId = ref(null)
 const selectedUser = ref(null)
 const newMessage = ref('')
 const stomp = ref(null)
 const scrollPane = ref(null)
+const groups = ref([])             // [{id,name,memberIds}]
+const selectedGroup = ref(null)    // seçili grup
+const groupPerms   = ref({ canUpdate:false, canDelete:false })
+const allUsersMap  = ref(new Map())       // id->user (isim çözümleme için)
+const membersViewOpen = ref(false)
+const permsOpen       = ref(false)        // “Roller & İzinler” placeholder
+const editOpen        = ref(false)        // “Grubu Düzenle” modalı
+const editName        = ref('')
+const editSelectedIds = ref([])
+const editSearch      = ref('')
+const isAdmin = ref(false)
+const groupCache = ref(new Map()) // key: "group:ID" -> Array<msg>
+// peerId -> boolean (history yüklendi mi?)
+const historyReadyByPeer = ref(new Map());
+
 const LAST_SEEN_KEY = 'chat_last_seen_ms'
+// --- Roller & İzinler state ---
+const permsSaving   = ref(false)
+const permSearch    = ref('')
+const permRows      = ref([]) // [{ userId, canUpdate, canDelete }]
+const permColumns   = [
+  { title: 'Kullanıcı', key: 'name',       dataIndex: 'name' },
+  { title: 'Güncelleme',  key: 'canUpdate',  dataIndex: 'canUpdate' },
+  { title: 'Silme',       key: 'canDelete',  dataIndex: 'canDelete' },
+  { title: 'İşlem',     key: 'actions',    dataIndex: 'actions' }
+]
+const permFilteredRows = computed(() => {
+  const q = permSearch.value.trim().toLowerCase()
+  if (!q) return permRows.value
+  return permRows.value.filter(r => userNameById(r.userId).toLowerCase().includes(q))
+})
+ 
+function isAdminUser(userId) {
+  const u = allUsersMap.value.get(String(userId))
+  const role = String(u?.role || u?.authority || '').toUpperCase()
+  return role.includes('ADMIN')
+}
+
+function isRowLocked(userId) {
+  // Admin satırı her zaman kilitli
+  if (isAdminUser(userId)) return true
+  // Onun dışındakilerde de “grant edebilir miyim?” kuralı
+  return !groupPerms.value.canGrant
+}
+
+
+async function openPerms() {
+  if (!selectedGroup.value) return
+  try {
+    await ensureAllUsersLoaded()
+
+    // Üye listesi yoksa grubu getir
+    if (!selectedGroup.value.memberIds) {
+      const { data } = await api.get(`/group/${selectedGroup.value.id}`)
+      selectedGroup.value = data
+    }
+
+    // Tüm grant'leri listele
+    const { data } = await api.get(`/group/${selectedGroup.value.id}/grants`)
+    const map = new Map(data.map(r => [String(r.userId), r]))
+
+    // ---- KENDİNİ GÖSTERME: meId'yı dışla ----
+    const myId = Number(meId.value)
+
+    // Temel: üyeleri al
+    let ids = (selectedGroup.value.memberIds || []).map(Number)
+
+    // (Opsiyonel) Üye olmayan ama grant verilmiş kullanıcılar da tabloda görünsün istersen aç:
+    // ids = Array.from(new Set([...ids, ...data.map(g => Number(g.userId))]))
+
+    // Kendini listeden çıkar
+    ids = ids.filter(uid => uid !== myId)
+
+    // tablo satırlarını hazırla (üyeler + varsa grant)
+    permRows.value = ids.map(uid => {
+      const g = map.get(String(uid))
+      return { userId: uid, canUpdate: !!g?.canUpdate, canDelete: !!g?.canDelete }
+    })
+
+    permsOpen.value = true
+  } catch (e) {
+    console.error(e)
+    const myId = Number(meId.value)
+    const ids = (selectedGroup.value?.memberIds || [])
+      .map(Number)
+      .filter(uid => uid !== myId) // hata durumunda da kendini çıkar
+
+    permRows.value = ids.map(uid => ({
+      userId: uid, canUpdate:false, canDelete:false
+    }))
+    permsOpen.value = true
+  }
+}
+
+
+async function savePerms() {
+  if (!selectedGroup.value) return
+    if (!groupPerms.value.canGrant) return message.warning('Yetkin yok')
+  permsSaving.value = true
+  try {
+    for (const r of permRows.value) {
+        if (isAdminUser(r.userId)) continue   // 🔒 admin kilitli
+      if (!r.canUpdate && !r.canDelete) {
+        // hiçbir yetki yoksa revoke
+        await api.delete(`/group/${selectedGroup.value.id}/grants/${r.userId}`)
+      } else {
+        // grant/update
+        await api.put(`/group/${selectedGroup.value.id}/grants`, {
+          userId: r.userId,
+          canUpdate: r.canUpdate,
+          canDelete: r.canDelete
+        })
+      }
+    }
+    message.success('İzinler güncellendi')
+    permsOpen.value = false
+    await fetchGroupPerms(selectedGroup.value.id) // başlıktaki menü görünürlüğü tazelensin
+  } catch (e) {
+    console.error(e)
+    message.error(e?.response?.data?.message || 'İzinler güncellenemedi')
+  } finally {
+    permsSaving.value = false
+  }
+}
+
+
+async function revokePerm(row) {
+  try {
+    await api.delete(`/group/${selectedGroup.value.id}/grants/${row.userId}`)
+    row.canUpdate = false
+    row.canDelete = false
+    message.success('Yetkiler kaldırıldı')
+  } catch (e) {
+    console.error(e)
+    message.error(e?.response?.data?.message || 'Kaldırılamadı')
+  }
+}
+
+
 function getLastSeen() { return Number(localStorage.getItem(LAST_SEEN_KEY) || 0) }
 function setLastSeen(ms = Date.now()) { localStorage.setItem(LAST_SEEN_KEY, String(ms)) }
+const updating = ref(false)
+
+const editAll = computed(() => {
+  // allUsersMap -> diziye dönüştür
+  return Array.from(allUsersMap.value.values()).map(u => ({
+    id: String(u.id),
+    name: buildName(u),
+    username: u.username,
+    email: u.email
+  }))
+})
+
+const editFilteredUsers = computed(() => {
+  const q = editSearch.value.trim().toLowerCase()
+  if (!q) return editAll.value
+  return editAll.value.filter(u =>
+    (u.name && u.name.toLowerCase().includes(q)) ||
+    (u.username && String(u.username).toLowerCase().includes(q)) ||
+    (u.email && String(u.email).toLowerCase().includes(q))
+  )
+})
+
+const editRowSelection = computed(() => ({
+  selectedRowKeys: editSelectedIds.value,
+  onChange: (keys) => { editSelectedIds.value = keys }
+}))
+
+async function openEditGroup() {
+  try {
+    // en güncel grup bilgisi
+    const { data } = await api.get(`/group/${selectedGroup.value.id}`)
+    selectedGroup.value = data
+    await ensureAllUsersLoaded()
+
+    editName.value = data.name || ''
+    editSelectedIds.value = (data.memberIds || []).map(id => String(id))
+    editOpen.value = true
+  } catch (e) {
+    console.error(e)
+    message.error('Grup bilgisi alınamadı')
+  }
+}
+
+function resetEdit() {
+  editOpen.value = false
+  editName.value = ''
+  editSearch.value = ''
+  editSelectedIds.value = []
+}
+
+async function handleEditSave() {
+  const name = editName.value.trim()
+  if (!name) return
+  updating.value = true
+  try {
+    const userIds = Array.from(new Set(editSelectedIds.value)).map(Number)
+    const { data } = await api.put(`/group/${selectedGroup.value.id}`, { name, userIds })
+
+    // soldaki listeyi yenile
+    await loadMyGroups()
+
+    // seçili grubu listeden güncel haline çekelim
+    const updated = groups.value.find(g => String(g.id) === String(selectedGroup.value.id))
+    if (updated) {
+      selectedGroup.value = updated
+      // sağ panel başlığı
+      if (selectedUser.value?.id === `group:${updated.id}`) {
+        selectedUser.value.name = updated.name
+      }
+    }
+
+    message.success('Group updated')
+    resetEdit()
+  } catch (e) {
+    console.error(e)
+    message.error(e?.response?.data?.message || 'Update failed')
+  } finally {
+    updating.value = false
+  }
+}
+
+function confirmDeleteGroup() {
+  Modal.confirm({
+    title: 'Grubu sil?',
+    content: `"${selectedGroup.value?.name}" kalıcı olarak silinecek.`,
+    okText: 'Sil',
+    okType: 'danger',
+    cancelText: 'Vazgeç',
+    async onOk() {
+      try {
+        await api.delete(`/group/${selectedGroup.value.id}`)
+        message.success('Group deleted')
+        // paneli kapat
+        selectedGroup.value = null
+        selectedUser.value = null
+        await loadMyGroups()
+      } catch (e) {
+        console.error(e)
+        message.error(e?.response?.data?.message || 'Delete failed')
+      }
+    }
+  })
+}
 
 // peerId -> Set(messageId)
 const seenIdsByPeer = ref(new Map())
@@ -179,17 +552,9 @@ onMounted(async () => {
       meId.value = String(me.id)
       localStorage.setItem('id', meId.value)
     }
+    isAdmin.value = String(me?.role || '').toUpperCase() === 'ADMIN'
 
-    const list = listRes.ok ? await listRes.json() : []
-    none_filtered_users.value = list.map(u => ({
-      id: String(u.id),
-      name: buildName(u),
-      avatar: makeAvatar(u),
-      lastMessage: '',
-      messages: [],
-      unread: 0,
-      lastTs: 0
-    }))
+    const list = listRes.ok ? await listRes.json() : [] 
     const filtered = list.filter(u => !me || String(u.id) !== String(me.id))
     users.value = filtered.map(u => ({
       id: String(u.id),
@@ -220,6 +585,9 @@ onMounted(async () => {
   } catch (e) {
     console.error('init error', e)
   }
+  await loadMyGroups()
+  await prefetchGroupHeads()
+
 })
 
 const cleanup = []
@@ -228,6 +596,140 @@ onBeforeUnmount(() => {
   if (stomp.value?.active) stomp.value.deactivate()
   cleanup.forEach(fn => { try { fn() } catch {} })
 })
+async function prefetchGroupHeads() {
+  const me = String(meId.value)
+  await Promise.all((groups.value || []).map(async (g) => {
+    const peerId = `group:${g.id}`
+    const res = await fetch(`${API_BASE}/messages?peerId=${encodeURIComponent(peerId)}&limit=${MSG_LIMIT}`, {
+      headers: authHeaders()
+    })
+    if (!res.ok) return
+    const list = await res.json()
+
+    // FE’deki loadHistory ile aynı ID kurgusu
+    const msgs = list.map(x => {
+      const ts  = toMillis(x.createdAt)
+ const gid = normalizeGroupId(x.groupId)
+ const id  = String(x.id ?? makeMid({
+   fromId: String(x.fromUserId),
+   toId:   String(x.toUserId ?? ''),
+   ts,
+   content: x.content,
+   gid
+ }))
+      return {
+        id,
+        fromUserId: String(x.fromUserId),
+        toUserId:   String(x.toUserId ?? ''),
+        content:    String(x.content ?? ''),
+        createdAt:  ts,
+        groupId:    gid
+      }
+    }).sort((a,b) => a.createdAt - b.createdAt)
+
+groupCache.value.set(peerId, msgs)
+    seenIdsByPeer.value.set(peerId, new Set(msgs.map(m => m.id)))
+    historyReadyByPeer.value.set(peerId, true)
+    // menüde son mesaj
+    g.lastMessage = msgs.at(-1)?.content || ''
+
+    // menüde unread
+    const lastRead = Number(readMapRef.value[peerId] ?? 0)
+    g.unread = msgs.filter(m => m.toUserId === me && m.createdAt > lastRead).length
+  }))
+}
+
+async function loadMyGroups() {
+  try {
+    const res = await fetch(`${API_BASE}/my-groups`, { headers: authHeaders() })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    groups.value = await res.json()
+  } catch (e) {
+    console.error('groups load error', e)
+  }
+} 
+const handleSelectGroup = async ({ key }) => {
+  const g = groups.value.find(x => String(x.id) === String(key))
+  if (!g) return
+  selectedGroup.value = g
+  await ensureAllUsersLoaded()
+  await fetchGroupPerms(g.id)
+
+  const peerId = `group:${g.id}`
+  const cached = groupCache.value.get(peerId)
+
+  selectedUser.value = {
+    id: peerId,
+    name: g.name,
+    avatar: null,
+    messages: cached ? cached : [],
+    unread: 0,
+    lastTs: 0
+  }
+
+ if (cached) {
+    const uniq = Array.from(new Map(cached.map(m => [m.id, m])).values())
+   if (uniq.length !== cached.length) {
+     groupCache.value.set(peerId, uniq)
+     selectedUser.value.messages = uniq
+   }
+   seenIdsByPeer.value.set(peerId, new Set(selectedUser.value.messages.map(m => m.id)))
+   historyReadyByPeer.value.set(peerId, true)
+ } else {
+    await loadHistory(peerId)
+  }
+
+  // okundu
+  const ts = selectedUser.value.messages.at(-1)?.createdAt || Date.now()
+  setLastRead(peerId, ts)
+  const gg = groups.value.find(x => String(x.id) === String(g.id))
+  if (gg) gg.unread = 0
+
+  await scrollBottom()
+}
+
+
+async function ensureAllUsersLoaded() {
+  if (allUsersMap.value.size > 0) return
+  const { data } = await api.get('/users')
+  const m = new Map()
+  data.forEach(u => m.set(String(u.id), u))
+  allUsersMap.value = m
+}
+function openMembersView() {
+  // eğer memberIds yoksa detay çek
+  if (!selectedGroup.value?.memberIds) {
+    api.get(`/group/${selectedGroup.value.id}`).then(({data}) => {
+      selectedGroup.value = data
+      membersViewOpen.value = true
+    }).catch(()=> membersViewOpen.value = true)
+  } else {
+    membersViewOpen.value = true
+  }
+}
+
+function userNameById(id) {
+  const u = allUsersMap.value.get(String(id))
+  if (!u) return `#${id}`
+  const full = [u.first_name || u.firstName, u.last_name || u.lastName].filter(Boolean).join(' ')
+  return full || u.username || u.email || `#${id}`
+}
+ 
+async function fetchGroupPerms(id) {
+  try {
+    const { data } = await api.get(`/group/${id}/permissions`)
+    groupPerms.value = {
+      canUpdate: !!data?.canUpdate,
+      canDelete: !!data?.canDelete,
+      canGrant:  !!data?.canGrant,   // 👈 eklendi
+    }
+  } catch {
+    groupPerms.value = isAdmin.value
+      ? { canUpdate:true, canDelete:true, canGrant:true }
+      : { canUpdate:false, canDelete:false, canGrant:false }
+  }
+}
+
 
 async function loadAllHistories() {
   const readMap = readMapRef.value
@@ -247,37 +749,69 @@ async function loadAllHistories() {
   sortUserList()
 }
 
-
 async function loadHistory(peerId) {
-  const res = await fetch(`${API_BASE}/messages?peerId=${encodeURIComponent(peerId)}&limit=${MSG_LIMIT}`, {
-    headers: authHeaders()
-  })
-  if (!res.ok) return
-  const list = await res.json() // [{id,fromUserId,toUserId,content,createdAt}]
-  const peer = users.value.find(u => u.id === String(peerId))
-  if (!peer) return
+  historyReadyByPeer.value.set(String(peerId), false);
 
-  const set = seenIdsByPeer.value.get(peer.id) ?? new Set()
-  for (const x of list) {
-    const msg = {
-      id: String(x.id ?? `${x.fromUserId}|${x.toUserId}|${x.createdAt}|${x.content ?? ''}`),
+  const res = await fetch(`${API_BASE}/messages?peerId=${encodeURIComponent(peerId)}&limit=${MSG_LIMIT}`, { headers: authHeaders() });
+  if (!res.ok) return;
+  const list = await res.json();
+
+  let peer = users.value.find(u => u.id === String(peerId));
+  if (!peer && isGroupId(peerId) && selectedUser.value?.id === String(peerId)) peer = selectedUser.value;
+  if (!peer) return;
+
+  const key = String(peerId);
+  const set = seenIdsByPeer.value.get(key) ?? new Set();
+  
+  const me = String(meId.value);
+  const isGroup = isGroupId(peerId);
+
+  const msgs = list.map(x => {
+    const ts = toMillis(x.createdAt);
+    const gid = normalizeGroupId(x.groupId);
+
+    // DM'ler için toId'yi doğru şekilde ayarla
+    const toIdForMid = isGroup ? null : peerId;
+    
+    // Mesaj kimliğini oluştur veya kullan
+    const id = String(x.id ?? makeMid({
+      fromId: String(x.fromUserId),
+      toId: toIdForMid,
+      ts,
+      content: x.content,
+      gid
+    }));
+    
+    return {
+      id,
       fromUserId: String(x.fromUserId),
       toUserId: String(x.toUserId ?? ''),
       content: String(x.content ?? ''),
-      createdAt: toMillis(x.createdAt)
-    }
-    if (set.has(msg.id)) continue
-    set.add(msg.id)
-    peer.messages.push(msg)
+      createdAt: ts,
+      groupId: gid,
+    };
+  }).sort((a,b) => a.createdAt - b.createdAt);
+  
+  for (const m of msgs) {
+    if (set.has(m.id)) continue;
+    set.add(m.id);
+    peer.messages.push(m);
   }
-  seenIdsByPeer.value.set(peer.id, set)
-
-  // son mesaj metnini güncelle
-  peer.lastMessage = peer.messages.at(-1)?.content ?? ''
-  peer.lastTs = lastMessageTs(peer) || 0
-  peer.unread = computeUnread(peer)
-
+  
+  seenIdsByPeer.value.set(key, set);
+  if (isGroupId(peerId)) {
+    const cur = groupCache.value.get(key) || [];
+    const have = new Set(cur.map(x => x.id));
+    for (const m of peer.messages) if (!have.has(m.id)) cur.push(m);
+    groupCache.value.set(key, cur);
+  }
+  
+  peer.lastMessage = peer.messages.at(-1)?.content ?? '';
+  peer.lastTs = lastMessageTs(peer) || 0;
+  peer.unread = computeUnread(peer);
+  historyReadyByPeer.value.set(String(peerId), true);
 }
+
 
 async function connectWs () {
   const token = localStorage.getItem('jwtToken')
@@ -292,67 +826,81 @@ async function connectWs () {
   })
 
   client.onConnect = () => {
-    client.subscribe('/user/queue/messages', async (frame) => {
-      let payload
-      try { payload = JSON.parse(frame.body) } catch { return }
+client.subscribe('/user/queue/messages', async (frame) => {
+  let payload
+  try { payload = JSON.parse(frame.body) } catch { return }
 
-      const fromId = String(payload.fromUserId)
-      const toId   = String(payload.toUserId)
-      const ts     = toMillis(payload.createdAt)
-      const mid    = String(payload.id ?? `${fromId}|${toId}|${ts}|${payload.content ?? ''}`)
+  const fromId = String(payload.fromUserId)
+  const toId   = String(payload.toUserId)
+  const ts     = toMillis(payload.createdAt)
 
-      // Hangi sohbet?
-      const peerId = (fromId === meId.value) ? toId : fromId
+const gid = normalizeGroupId(payload.groupId)
+ const isGroup = !!gid
+ const mid = String(payload.id ?? makeMid({ fromId, toId, ts, content: payload.content, gid }))
 
-      // Peer hazırla (yoksa oluştur)
-      let peer = users.value.find(u => u.id === peerId)
-      if (!peer) {
-        peer = {
-          id: peerId,
-          name: `Kullanıcı #${peerId}`,
-          avatar: makeAvatar({ firstName: '?', lastName: peerId }),
-          lastMessage: '',
-          messages: [],
-          unread: 0,
-          lastTs: 0
-        }
-        users.value.unshift(peer)
-      }
+  const peerId = isGroup ? gid : (fromId === meId.value ? toId : fromId)
 
-      // Dedup
-      const set = seenIdsByPeer.value.get(peer.id) ?? new Set()
-      if (set.has(mid)) return
-      set.add(mid)
-      seenIdsByPeer.value.set(peer.id, set)
+  // --- Dedup peerId bazında 
+  const set = seenIdsByPeer.value.get(peerId) ?? new Set()
+  if (set.has(mid)) return
+  set.add(mid)
+  seenIdsByPeer.value.set(peerId, set)
 
-      // Mesajı ekle
-      const msg = { id: mid, fromUserId: fromId, toUserId: toId, content: String(payload.content ?? ''), createdAt: ts }
-      peer.messages.push(msg)
-      peer.lastMessage = msg.content
-      peer.lastTs = ts
+  const msg = { id: mid, fromUserId: fromId, toUserId: toId, content: String(payload.content ?? ''), createdAt: ts ,groupId: gid || null}
 
-      // --- ROZET KURALI (tek yer) ---
-      const isIncoming = (toId === meId.value)
-      if (isIncoming) {
-        const openNow = isPeerOpen(peer.id) // seçili + fokus + visible
-        if (openNow) {
-          // sohbet ekranda → okundu
-          setLastRead(peer.id, ts)
-          peer.unread = 0
-        } else {
-          // sohbet kapalı → rozet +1 (MANUEL)
-          peer.unread = (peer.unread || 0) + 1
-        }
-      }
-      // NOT: Outgoing için unread değiştirmiyoruz
+if (isGroup) {
+    if (!historyReadyByPeer.value.get(peerId)) {
+      const arr = groupCache.value.get(peerId) || []
+      if (!arr.some(m => m.id === mid)) arr.push(msg)
+      groupCache.value.set(peerId, arr)
+      return
+    }
+     // Menü: son mesaj + rozet
+    const gidNum = peerId.replace('group:', '')
+    const g = groups.value.find(x => String(x.id) === gidNum)
+    if (g) {
+      g.lastMessage = msg.content
+      if (selectedUser.value?.id !== peerId) g.unread = (g.unread || 0) + 1
+    }
 
-      // Listeyi güncelle
-      bumpPeerTop(peer, ts)
-      sortUserList()
+    return
+  }
 
-      // Açık pencere ise aşağı kaydır
-      if (selectedUser.value?.id === peer.id) await scrollBottom()
-    })
+  // --- DM akışı (mevcut davranış)
+  let peer = users.value.find(u => u.id === peerId)
+  if (!peer) {
+    peer = {
+      id: peerId,
+      name: `Kullanıcı #${peerId}`,
+      avatar: makeAvatar({ firstName: '?', lastName: peerId }),
+      lastMessage: '',
+      messages: [],
+      unread: 0,
+      lastTs: 0
+    }
+    users.value.unshift(peer)
+  }
+
+  peer.messages.push(msg)
+  peer.lastMessage = msg.content
+  peer.lastTs = ts
+
+  const isIncoming = (toId === meId.value)
+  if (isIncoming) {
+    const openNow = isPeerOpen(peer.id)
+    if (openNow) {
+      setLastRead(peer.id, ts)
+      peer.unread = 0
+    } else {
+      peer.unread = (peer.unread || 0) + 1
+    }
+  }
+  bumpPeerTop(peer, ts)
+  sortUserList()
+
+  if (selectedUser.value?.id === peer.id) await scrollBottom()
+})
+
   }
 
   client.onStompError    = (f) => console.error('STOMP error', f.headers, f.body)
@@ -379,7 +927,21 @@ const handleSelectUser = async ({ key }) => {
 
 }
 
-// === helpers ===
+// === helpers ===  
+function isGroupId(id) {
+  return String(id || '').startsWith('group:')
+}
+ 
+function nameColor(userId) {
+  const s = String(userId ?? '')
+  // basit hash
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  // 0..360
+  const hue = h % 360
+  return `hsl(${hue}, 65%, 45%)`
+}
+
 function sortUserList() {
   users.value = [...users.value].sort((a, b) => {
     const ua = (a.unread || 0) > 0 ? 1 : 0
@@ -399,22 +961,55 @@ function bumpPeerTop(peer, ts) {
     users.value.unshift(peer)
   }
 }
-
 const sendMessage = () => {
-  if (!newMessage.value.trim() || !selectedUser.value) return
-  const text = newMessage.value
-  newMessage.value = ''
+  if (!newMessage.value.trim() || !selectedUser.value) return;
 
-  // optimistic yok → WS echo ile gelecek
+  const text = newMessage.value;
+  const peerId = selectedUser.value.id;
+  
   if (stomp.value?.connected) {
+    const payload = { toUserId: peerId, content: text };
+    
     stomp.value.publish({
       destination: '/app/chat.send',
-      body: JSON.stringify({ toUserId: selectedUser.value.id, content: text })
-    })
+      body: JSON.stringify(payload),
+    });
+
+    const now = Date.now();
+    const isGroup = isGroupId(peerId);
+    
+    const tempMsg = {
+      id: makeMid({
+        fromId: String(meId.value),
+        toId: isGroup ? null : peerId, // Correct: Use peerId for DMs
+        ts: now,
+        content: text,
+        gid: isGroup ? peerId : null
+      }),
+      fromUserId: String(meId.value), 
+      toUserId: isGroup ? null : peerId, // Correct: Use peerId for DMs
+      content: text,
+      createdAt: now,
+      groupId: isGroup ? peerId : null,
+    };
+
+    selectedUser.value.messages.push(tempMsg);
+
+    if (isGroup) {
+      const g = groups.value.find(x => x.id === peerId.substring('group:'.length));
+      if (g) g.lastMessage = text;
+    } else {
+      const u = users.value.find(x => x.id === peerId);
+      if (u) u.lastMessage = text;
+    }
+
+    nextTick(() => scrollBottom());
+
+    newMessage.value = '';
   } else {
-    console.warn('STOMP bağlı değil')
+    console.warn('STOMP bağlı değil.');
   }
-}
+};
 function lastIncomingTs(peer) {
   const me = String(meId.value)
   let t = 0
@@ -422,6 +1017,20 @@ function lastIncomingTs(peer) {
     if (String(m.toUserId) === me) t = Math.max(t, Number(m.createdAt) || 0)
   }
   return t
+}
+function normalizeGroupId(raw) {
+  if (!raw) return null
+  const s = String(raw)
+  return s.startsWith('group:') ? s : `group:${s}`
+}
+ 
+function makeMid({ fromId, toId, ts, content, gid }) {
+  if (gid) {
+    return `${gid}|${fromId}|${ts}|${content ?? ''}`;
+  }
+  // DM'ler için ID'yi tutarlı hale getir
+  const [user1, user2] = [String(fromId), String(toId)].sort();
+  return `${user1}|${user2}|${ts}|${content ?? ''}`;
 }
 
 function isMine(m) { return String(m.fromUserId) === String(meId.value) }
@@ -460,8 +1069,8 @@ const resetCreate = () => {
 
 const filteredUsers = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return none_filtered_users.value
-  return none_filtered_users.value.filter(u =>
+  if (!q) return users.value
+  return users.value.filter(u =>
     (u.name && u.name.toLowerCase().includes(q)) ||
     (u.username && String(u.username).toLowerCase().includes(q)) ||
     (u.email && String(u.email).toLowerCase().includes(q))
@@ -492,7 +1101,7 @@ const handleCreateGroup = async () => {
     })
     message.success(`Group ${data.name} succesfully created `)
     resetCreate()
-    // İstersen burada grup listesini yeniletebilirsin
+    loadMyGroups()
   } catch (e) {
     console.error(e)
     const msg = e?.response?.data?.message || 'Failed to create group'
@@ -501,4 +1110,57 @@ const handleCreateGroup = async () => {
     creating.value = false
   }
 }
-</script>
+</script> 
+
+<style scoped>
+/* Ant Menu item’ın iki satırı sığdırabilmesi için */
+:deep(.ant-menu-item) {
+  height: auto !important;               /* sabit yükseklik yok */
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+  align-items: flex-start !important;     /* içeriği yukarı hizala */
+}
+
+/* Seçilince de gri alt satırın rengi bozulmasın */
+:deep(.ant-menu-item-selected) .sub {
+  color: #8c8c8c !important;
+}
+
+/* İç kapsayıcı: iki satır */
+.group-item {
+  display: grid;
+  grid-template-rows: auto auto;
+  row-gap: 2px;
+  width: 100%;
+}
+
+.group-item .title {
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.group-item .sub {
+  font-size: 12px;
+  line-height: 16px;
+  color: #8c8c8c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sağ üstte okunmamış rozet */
+.badge {
+  position: absolute;
+  right: 12px;
+  top: 8px;
+  background: #1677ff;
+  color: #fff;
+  border-radius: 999px;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 12px;
+  padding: 0 6px;
+}
+</style> 

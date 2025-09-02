@@ -109,8 +109,7 @@ const isAdmin = computed(() => {
 
 // bulunduğumuz rota /admin mi?
 const isOnAdmin = computed(() => route.path.startsWith('/admin'))
-const adminButtonLabel = computed(() => (isOnAdmin.value ? 'Message Page' : 'Admin Page'))
-
+const adminButtonLabel = computed(() => (isOnAdmin.value ? 'Mesaj Sayfası' : 'Admin Sayfası'))
 function goToAdminOrHome() {
   if (!isAdmin.value) return
   if (isOnAdmin.value) {
