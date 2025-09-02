@@ -1,5 +1,5 @@
 <template>
-  <a-layout class="min-h-screen">
+  <a-layout class="app-shell">
     <!-- NAVBAR -->
     <a-layout-header :style="headerStyle">
       <div style="color:#fff;font-size:20px;font-weight:bold">BİTES</div>
@@ -33,7 +33,7 @@
     </a-layout-header>
 
     <!-- Sayfa içeriği -->
-    <a-layout-content style="padding:24px;background:#fff">
+    <a-layout-content :style="contentStyle">
       <router-view />
     </a-layout-content>
 
@@ -65,20 +65,29 @@ import { Modal } from 'ant-design-vue'
 import { UserOutlined } from '@ant-design/icons-vue'
 import api from '@/api'
 
-// ---- Styles
-const headerStyle = {
-  backgroundColor: '#1e3a8a',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  padding: '0 24px',
-  height: '60px',
-}
-const avatarStyle = {
-  backgroundColor: 'rgba(255,255,255,0.2)',
-  color: '#fff',
-}
+const HEADER_H = 54; // ant default 64px, değiştirirsen alttakileri de güncelle
 
+const headerStyle = {
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  zIndex: 1000,
+  height: `${HEADER_H}px`,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingInline: '24px'
+
+};
+
+const contentStyle = {
+  marginTop: `${HEADER_H}px`,
+  height: `calc(100vh - ${HEADER_H}px)`,
+  padding: '20px',               // önemli: chat sayfası tam ekran çalışsın
+  overflow: 'hidden',
+  background: '#fff'
+};
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()

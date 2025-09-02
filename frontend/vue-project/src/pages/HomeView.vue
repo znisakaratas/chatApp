@@ -1,6 +1,6 @@
 <template>
-  <a-layout style="height:100vh">
-    <a-layout-sider width="300" theme="light">
+<a-layout :style="chatLayoutStyle">
+  <a-layout-sider :style="siderStyle" width="300" theme="light">
       <div style="padding:10px;font-weight:600;font-size:18px">Kişiler</div>
       <a-menu :selectedKeys="selectedUser ? [selectedUser.id] : []" @click="handleSelectUser" style="padding-left:0">
         <a-menu-item v-for="u in users" :key="u.id" :style="{ paddingLeft: '0px', height: '72px', position: 'relative' }">
@@ -21,27 +21,27 @@
         <a-button style="border: transparent; padding-left: 150px;" type="primary" ghost @click="openCreateGroup">+</a-button>
       </div> 
       <a-menu
-  :selectedKeys="selectedGroup ? [String(selectedGroup.id)] : []"
-  @click="handleSelectGroup"
-  style="padding-left:0"
->
-  <a-menu-item
-    v-for="g in groups"
-    :key="String(g.id)"
-    :style="{ position:'relative' }"
-  >
-    <div class="group-item">
-      <div class="title">{{ g.name }}</div>
-      <div class="sub">{{ g.lastMessage || ' ' }}</div>
-    </div>
+        :selectedKeys="selectedGroup ? [String(selectedGroup.id)] : []"
+        @click="handleSelectGroup"
+        style="padding-left:0"
+      >
+        <a-menu-item
+          v-for="g in groups"
+          :key="String(g.id)"
+          :style="{ position:'relative' }"
+        >
+          <div class="group-item">
+            <div class="title">{{ g.name }}</div>
+            <div class="sub">{{ g.lastMessage || ' ' }}</div>
+          </div>
 
-    <span v-if="g.unread > 0" class="badge">
-      {{ g.unread }}
-    </span>
-  </a-menu-item>
-</a-menu>
-
+          <span v-if="g.unread > 0" class="badge">
+            {{ g.unread }}
+          </span>
+        </a-menu-item>
+      </a-menu>
     </a-layout-sider>
+
     <a-modal
       v-model:open="createOpen"
       title="Create Group"
@@ -223,6 +223,21 @@
 </template>
 
 <script setup>
+const HEADER_H = 54;
+const chatLayoutStyle = {
+  
+  height: `100%`,
+  overflow: 'hidden',   // sayfa değil içerikler scroll yapsın
+  background: '#fff'
+};
+
+const siderStyle = {
+  height: '100%',
+  overflowY: 'auto',    // sadece sol liste scroll
+  borderRight: '1px solid #eee'
+};
+
+
 import { ref, onMounted, onBeforeUnmount, nextTick,computed } from 'vue'
 import SockJS from 'sockjs-client/dist/sockjs'
 import { Client } from '@stomp/stompjs'  
