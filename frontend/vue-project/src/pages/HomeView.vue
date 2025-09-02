@@ -223,17 +223,18 @@
 </template>
 
 <script setup>
+
 const HEADER_H = 54;
 const chatLayoutStyle = {
   
   height: `100%`,
-  overflow: 'hidden',   // sayfa değil içerikler scroll yapsın
+  overflow: 'hidden',   
   background: '#fff'
 };
 
 const siderStyle = {
   height: '100%',
-  overflowY: 'auto',    // sadece sol liste scroll
+  overflowY: 'auto',     
   borderRight: '1px solid #eee'
 };
 
@@ -529,10 +530,19 @@ function lastMessageTs(peer) {
 function computeUnread(peer) {
   const lastRead = Number(readMapRef.value[peer.id] ?? 0)
   const me = String(meId.value)
+
+  if (isGroupId(peer.id)) { 
+    return peer.messages.filter(m =>
+      m.groupId && String(m.fromUserId) !== me && Number(m.createdAt) > lastRead
+    ).length
+  }
+
+  // DM’lerde eskisi gibi
   return peer.messages.filter(m =>
     String(m.toUserId) === me && Number(m.createdAt) > lastRead
   ).length
 }
+
 
 function setLastRead(peerId, ts = Date.now()) {
   const prev = Number(readMapRef.value[peerId] || 0)
@@ -649,8 +659,8 @@ groupCache.value.set(peerId, msgs)
     g.lastMessage = msgs.at(-1)?.content || ''
 
     // menüde unread
-    const lastRead = Number(readMapRef.value[peerId] ?? 0)
-    g.unread = msgs.filter(m => m.toUserId === me && m.createdAt > lastRead).length
+    const lastRead = Number(readMapRef.value[peerId] ?? 0) 
+    g.unread = msgs.filter(m => m.groupId && String(m.fromUserId) !== me && m.createdAt > lastRead).length 
   }))
 }
 
@@ -875,8 +885,9 @@ if (isGroup) {
     const g = groups.value.find(x => String(x.id) === gidNum)
     if (g) {
       g.lastMessage = msg.content
-      if (selectedUser.value?.id !== peerId) g.unread = (g.unread || 0) + 1
-    }
+    if (selectedUser.value?.id !== peerId && fromId !== meId.value) {
+      g.unread = (g.unread || 0) + 1
+    }    }
 
     return
   }
@@ -913,7 +924,15 @@ if (isGroup) {
   bumpPeerTop(peer, ts)
   sortUserList()
 
-  if (selectedUser.value?.id === peer.id) await scrollBottom()
+  if (selectedUser.value?.id === peer.id){
+    selectedUser.value.messages.push(msg) 
+    if (fromId !== meId.value && isPeerOpen(peerId)) {
+      setLastRead(peerId, msg.createdAt)
+    }
+    await scrollBottom()
+
+   return
+  } 
 })
 
   }

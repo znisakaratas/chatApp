@@ -116,8 +116,7 @@ onMounted(async () => {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    const data = await res.json()
-    // UI’nin beklediği shape’e çevir: messages/lastMessage alanları UI içindir
+    const data = await res.json() 
     users.value = data.map(u => ({
       id: String(u.id),
       name: buildName(u),
