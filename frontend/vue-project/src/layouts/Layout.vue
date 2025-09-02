@@ -84,10 +84,15 @@ const headerStyle = {
 const contentStyle = {
   marginTop: `${HEADER_H}px`,
   height: `calc(100vh - ${HEADER_H}px)`,
-  padding: '20px',               // önemli: chat sayfası tam ekran çalışsın
+  padding: "24px",               // önemli: chat sayfası tam ekran çalışsın
   overflow: 'hidden',
   background: '#fff'
 };
+const avatarStyle = {
+  backgroundColor: 'rgba(255,255,255,0.2)',
+  color: '#fff',
+}
+
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()

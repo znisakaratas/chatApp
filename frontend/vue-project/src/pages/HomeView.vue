@@ -29,15 +29,13 @@
           v-for="g in groups"
           :key="String(g.id)"
           :style="{ position:'relative' }"
+            :class="{ 'is-unread': (g.unread || 0) > 0 }"
         >
           <div class="group-item">
             <div class="title">{{ g.name }}</div>
             <div class="sub">{{ g.lastMessage || ' ' }}</div>
           </div>
-
-          <span v-if="g.unread > 0" class="badge">
-            {{ g.unread }}
-          </span>
+ 
         </a-menu-item>
       </a-menu>
     </a-layout-sider>
@@ -859,7 +857,7 @@ client.subscribe('/user/queue/messages', async (frame) => {
   const toId   = String(payload.toUserId)
   const ts     = toMillis(payload.createdAt)
 
-const gid = normalizeGroupId(payload.groupId)
+  const gid = normalizeGroupId(payload.groupId)
  const isGroup = !!gid
  const mid = String(payload.id ?? makeMid({ fromId, toId, ts, content: payload.content, gid }))
 
@@ -873,7 +871,7 @@ const gid = normalizeGroupId(payload.groupId)
 
   const msg = { id: mid, fromUserId: fromId, toUserId: toId, content: String(payload.content ?? ''), createdAt: ts ,groupId: gid || null}
 
-if (isGroup) {
+  if (isGroup) {
     if (!historyReadyByPeer.value.get(peerId)) {
       const arr = groupCache.value.get(peerId) || []
       if (!arr.some(m => m.id === mid)) arr.push(msg)
@@ -1158,6 +1156,27 @@ const handleCreateGroup = async () => {
 /* Seçilince de gri alt satırın rengi bozulmasın */
 :deep(.ant-menu-item-selected) .sub {
   color: #8c8c8c !important;
+}
+/* Okunmamış grup satırı vurgusu */
+:deep(.ant-menu-item.is-unread) {
+  background: #e6f4ff !important; /* hafif parlak mavi */
+}
+
+/* Sol ince vurgu şeridi */
+:deep(.ant-menu-item.is-unread)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: #1677ff;
+  border-radius: 2px;
+}
+
+/* Başlığı biraz daha baskın yap */
+:deep(.ant-menu-item.is-unread .group-item .title) {
+  font-weight: 700;
 }
 
 /* İç kapsayıcı: iki satır */
