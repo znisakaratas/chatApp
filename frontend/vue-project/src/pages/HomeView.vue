@@ -29,8 +29,11 @@
           v-for="g in groups"
           :key="String(g.id)"
           :style="{ position:'relative' }"
-            :class="{ 'is-unread': (g.unread || 0) > 0 }"
+          :class="{ 'is-unread': (g.unread || 0) > 0 }"
+          
         >
+          <!--CLASS YAZAN KISIM PAGINATION ÖNCESİ KALDIRILACAK PAGINATION OLUNCA -->
+
           <div class="group-item">
             <div class="title">{{ g.name }}</div>
             <div class="sub">{{ g.lastMessage || ' ' }}</div>
