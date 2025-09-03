@@ -165,6 +165,7 @@ onMounted(async () => {
     try {
       const { data } = await api.get('/user')
       user.value = data
+      localStorage.setItem('role', data.role.toLowerCase())
       console.log('User from backend:', data)
 
     } catch (e) {
