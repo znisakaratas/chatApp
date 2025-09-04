@@ -109,7 +109,8 @@ const makeAvatar = (u) =>
 
 const fullName = computed(() => buildName(user.value))
 const avatarUrl = computed(() => makeAvatar(user.value))
-
+const role = user.value.role 
+localStorage.setItem('role', role)
 const isAdmin = computed(() => {
   const u = user.value || {}
   const type = String(u.type || u.role || u.userType || '').toUpperCase()
@@ -165,7 +166,8 @@ onMounted(async () => {
     try {
       const { data } = await api.get('/user')
       user.value = data
-      localStorage.setItem('role', data.role.toLowerCase())
+      localStorage.setItem('role', data.role)
+      
       console.log('User from backend:', data)
 
     } catch (e) {
