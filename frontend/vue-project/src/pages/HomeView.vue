@@ -103,15 +103,24 @@
        </div>
 
         <div ref="scrollPane" style="flex:1;padding:16px;overflow-y:auto">
-        <!-- Üst-ortada kayan gün etiketi -->
+
+           <div v-if="selectedUser && (hasMoreByPeer.get(selectedUser.id) || false)"
+                class="load-older-wrap">
+            <a-button
+              size="small"
+              type="primary"
+              ghost
+              shape="round"
+              @click="loadOlderMessages(selectedUser.id)"
+              :loading="loadingOlder"
+            >
+              Önceki mesajları yükle
+            </a-button>
+          </div>
+                  <!-- Üst-ortada kayan gün etiketi -->
         <div v-show="floatingDay"
             class="floating-day">
           {{ floatingDay }}
-        </div>
-          <div v-if="selectedUser && (hasMoreByPeer.get(selectedUser.id) || false)" style="text-align:center;margin-bottom:8px">
-          <a-button size="small" @click="loadOlderMessages(selectedUser.id)" :loading="loadingOlder">
-            Önceki mesajları yükle
-          </a-button>
         </div>
          <div v-for="(m, i) in selectedUser.messages" :key="m.id || i"
               class="msg-row"
@@ -1425,12 +1434,12 @@ const handleCreateGroup = async () => {
   font-size: 12px;
   padding: 0 6px;
 }
- .floating-day{
+.floating-day{
   position: sticky;
-  top: 8px;
+  top: 12px;                 /* biraz daha aşağı */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 5;
+  z-index: 6;
   display: inline-block;
   padding: 4px 10px;
   background: #e6f4ff;
@@ -1439,7 +1448,21 @@ const handleCreateGroup = async () => {
   font-weight: 600;
   border-radius: 999px;
   border: 1px solid #bae0ff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.06);
   pointer-events: none;
 }
+
+/* “Önceki mesajları yükle” için merkezli, rozetten uzak */
+.load-older-wrap{
+  text-align: center;
+  margin: 28px 0 12px;       /* ÜSTTE boşluk: rozetle çakışmasın */
+}
+
+/* Ant Button’ın chip gibi görünmesi için min yatay padding */
+.load-older-wrap .ant-btn{
+  padding: 0 12px;
+  border-radius: 999px;
+}
+
 
 </style> 
