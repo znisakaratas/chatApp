@@ -101,7 +101,13 @@
               </a-dropdown>
             </template>
        </div>
+       
         <div ref="scrollPane" style="flex:1;padding:16px;overflow-y:auto">
+            <div v-if="selectedUser && (hasMoreByPeer.get(selectedUser.id) || false)" style="text-align:center;margin-bottom:8px">
+    <a-button size="small" @click="loadOlderMessages(selectedUser.id)" :loading="loadingOlder">
+      Önceki mesajları yükle
+    </a-button>
+  </div>
           <div v-for="(m, i) in selectedUser.messages" :key="m.id || i" style="margin-bottom:8px;display:flex"
             :style="{ justifyContent: isMine(m) ? 'flex-end' : 'flex-start' }">
             <div style="background:#fff;padding:8px 12px;border-radius:8px;max-width:70%">
@@ -221,8 +227,7 @@
 
     </a-layout-content>
   </a-layout>
-</template>
-
+</template> 
 <script setup>
 
 const HEADER_H = 54;
@@ -258,8 +263,7 @@ function isPeerOpen(peerId) {
 }
 const API_BASE = 'http://localhost:8080/api'
 const WS_URL = 'http://localhost:8080/ws'
-const MSG_LIMIT = 50
-
+const MSG_LIMIT = 15
 const users = ref([]) 
 const meId = ref(null)
 const selectedUser = ref(null)
@@ -279,8 +283,10 @@ const editSearch      = ref('')
 const isAdmin = ref(false)
 const groupCache = ref(new Map()) // key: "group:ID" -> Array<msg>
 // peerId -> boolean (history yüklendi mi?)
-const historyReadyByPeer = ref(new Map());
-
+const historyReadyByPeer = ref(new Map()); 
+const loadingOlder = ref(false)
+const hasMoreByPeer = ref(new Map()) // zaten var sende
+const nextCursorByPeer = ref(new Map()) // EKLE
 const LAST_SEEN_KEY = 'chat_last_seen_ms'
 // --- Roller & İzinler state ---
 const permsSaving   = ref(false)
@@ -630,10 +636,11 @@ async function prefetchGroupHeads() {
       headers: authHeaders()
     })
     if (!res.ok) return
-    const list = await res.json()
+    const json = await res.json()
+    const { items ,hasMore,nextCursor} = unwrapHistory(json)
 
     // FE’deki loadHistory ile aynı ID kurgusu
-    const msgs = list.map(x => {
+    const msgs = items.map(x => {
       const ts  = toMillis(x.createdAt)
  const gid = normalizeGroupId(x.groupId)
  const id  = String(x.id ?? makeMid({
@@ -657,9 +664,16 @@ groupCache.value.set(peerId, msgs)
     seenIdsByPeer.value.set(peerId, new Set(msgs.map(m => m.id)))
     historyReadyByPeer.value.set(peerId, true)
     // menüde son mesaj
-    g.lastMessage = msgs.at(-1)?.content || ''
+    
+// Doğrudan backend'den gelen `hasMore` değerini kullan
+hasMoreByPeer.value.set(String(peerId), hasMore)
 
-    // menüde unread
+// Veya daha güvenli bir yöntem olarak `nextCursor`'ı kontrol edin
+hasMoreByPeer.value.set(String(peerId), nextCursor != null)   
+ g.lastMessage = msgs.at(-1)?.content || ''
+
+    // menüde unread,
+    nextCursorByPeer.value.set(String(peerId), nextCursor ?? null)
     const lastRead = Number(readMapRef.value[peerId] ?? 0) 
     g.unread = msgs.filter(m => m.groupId && String(m.fromUserId) !== me && m.createdAt > lastRead).length 
   }))
@@ -704,8 +718,12 @@ const handleSelectGroup = async ({ key }) => {
  } else {
     await loadHistory(peerId)
   }
-
+  hasMoreByPeer.value.set(peerId, (selectedUser.value?.messages?.length || 0) >= MSG_LIMIT)
   // okundu
+ if (!nextCursorByPeer.value.has(peerId) || nextCursorByPeer.value.get(peerId) == null) {
+   const oldest = selectedUser.value.messages?.[0]?.createdAt
+   if (oldest != null) nextCursorByPeer.value.set(peerId, Number(oldest) - 1)
+ }
   const ts = selectedUser.value.messages.at(-1)?.createdAt || Date.now()
   setLastRead(peerId, ts)
   const gg = groups.value.find(x => String(x.id) === String(g.id))
@@ -713,7 +731,6 @@ const handleSelectGroup = async ({ key }) => {
 
   await scrollBottom()
 }
-
 
 async function ensureAllUsersLoaded() {
   if (allUsersMap.value.size > 0) return
@@ -774,13 +791,112 @@ async function loadAllHistories() {
   saveReadMap(readMap)
   sortUserList()
 }
+async function loadOlderMessages(peerId) {
+  if (loadingOlder.value) return
+  const key = String(peerId)
+  const cursor = nextCursorByPeer.value.get(key)
+  const hasMore = hasMoreByPeer.value.get(key) || false
+  if (!hasMore || cursor == null) return
 
-async function loadHistory(peerId) {
+  loadingOlder.value = true
+  try {
+    const container = scrollPane.value
+    const prevScrollHeight = container?.scrollHeight ?? 0
+    const firstIdBefore = selectedUser.value?.messages?.[0]?.id
+
+    const params = new URLSearchParams({
+      peerId: key,
+      limit: String(MSG_LIMIT),
+      beforeTs: String(cursor)   // DİKKAT: nextCursor → beforeTs
+    })
+    const res = await fetch(`${API_BASE}/messages?${params.toString()}`, { headers: authHeaders() })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { items, hasMore: moreAfter, nextCursor } = unwrapHistory(await res.json())
+
+    // ... (mapleme, dedup, tepeye prepend + scroll koruma)
+
+
+    // --- mapleme (loadHistory ile birebir)
+    const isGroup = isGroupId(key)
+    const mapped = items.map(x => {
+      const ts  = toMillis(x.createdAt)
+      const gid = normalizeGroupId(x.groupId)
+      const toIdForMid = isGroup ? null : key
+      const id  = String(x.id ?? makeMid({
+        fromId: String(x.fromUserId),
+        toId:   toIdForMid,
+        ts,
+        content: x.content,
+        gid
+      }))
+      return {
+        id,
+        fromUserId: String(x.fromUserId),
+        toUserId:   String(x.toUserId ?? ''),
+        content:    String(x.content ?? ''),
+        createdAt:  ts,
+        groupId:    gid,
+      }
+    }).sort((a,b) => a.createdAt - b.createdAt)
+
+    // --- dedup  TEPEYE PREPEND
+    const set = seenIdsByPeer.value.get(key) ?? new Set()
+    const older = []
+    for (const m of mapped) {
+      if (set.has(m.id)) continue
+      set.add(m.id)
+      older.push(m)
+    }
+    seenIdsByPeer.value.set(key, set)
+    if (older.length > 0) {
+      // mevcut liste
+      const peer =
+        (selectedUser.value?.id === key ? selectedUser.value :
+         users.value.find(u => u.id === key)) || selectedUser.value
+      // tepeye ekle
+      peer.messages = [...older, ...peer.messages]
+
+      // grup cache de güncel kalsın
+      if (isGroup) {
+        const cur = groupCache.value.get(key) || []
+        groupCache.value.set(key, [...older, ...cur])
+      }
+
+      // --- scroll koruma: önceki ilk mesaja göre offset ayarla
+      await nextTick()
+      if (container) {
+        const newScrollHeight = container.scrollHeight
+        const delta = newScrollHeight - prevScrollHeight
+        container.scrollTop += delta 
+      }
+      
+    }
+
+    // --- pagination flag/cursor güncelle
+    hasMoreByPeer.value.set(key,nextCursor ?? null)
+    nextCursorByPeer.value.set(key, nextCursor ?? null)
+    console.log('[older] fetched:', items.length, 'mapped:', mapped.length, 'prepended:', older.length, 'next:', nextCursor)
+if (older.length === 0) {
+  message.info('Daha eski mesaj yok'); // ant message
+}
+
+  } finally {
+    loadingOlder.value = false
+  }
+}
+async function loadHistory(peerId, beforeTs = null) {
   historyReadyByPeer.value.set(String(peerId), false);
+  const params = new URLSearchParams({
+    peerId: String(peerId),
+    limit: String(MSG_LIMIT)
+  })
+  if (beforeTs != null) params.set('beforeTs', String(beforeTs)) // DİKKAT: beforeTs
 
-  const res = await fetch(`${API_BASE}/messages?peerId=${encodeURIComponent(peerId)}&limit=${MSG_LIMIT}`, { headers: authHeaders() });
-  if (!res.ok) return;
-  const list = await res.json();
+  const res = await fetch(`${API_BASE}/messages?${params.toString()}`, { headers: authHeaders() })
+  if (!res.ok) return
+  const payload = await res.json()
+  const { items, hasMore, nextCursor } = unwrapHistory(payload)
+ console.log('[older] cursor in:',   'got', items?.length, 'nextCursor:', nextCursor, 'hasMore:', hasMore, payload)
 
   let peer = users.value.find(u => u.id === String(peerId));
   if (!peer && isGroupId(peerId) && selectedUser.value?.id === String(peerId)) peer = selectedUser.value;
@@ -792,7 +908,7 @@ async function loadHistory(peerId) {
   const me = String(meId.value);
   const isGroup = isGroupId(peerId);
 
-  const msgs = list.map(x => {
+  const msgs = items.map(x => {
     const ts = toMillis(x.createdAt);
     const gid = normalizeGroupId(x.groupId);
 
@@ -835,8 +951,9 @@ async function loadHistory(peerId) {
   peer.lastMessage = peer.messages.at(-1)?.content ?? '';
   peer.lastTs = lastMessageTs(peer) || 0;
   peer.unread = computeUnread(peer);
-  historyReadyByPeer.value.set(String(peerId), true);
-}
+  hasMoreByPeer.value.set(String(peerId), !!nextCursor || !!hasMore)
+  nextCursorByPeer.value.set(String(peerId), nextCursor ?? null)
+  historyReadyByPeer.value.set(String(peerId), true)}
 
 
 async function connectWs () {
@@ -890,7 +1007,13 @@ client.subscribe('/user/queue/messages', async (frame) => {
       g.unread = (g.unread || 0) + 1
     }    }
 
-    return
+  // Grup ekranı açıksa doğrudan ekle okundu scroll
+  if (selectedUser.value?.id === peerId) {
+    selectedUser.value.messages.push(msg)
+    setLastRead(peerId, ts)
+    await scrollBottom()
+  }
+  return
   }
 
   // --- DM akışı (mevcut davranış)
@@ -926,8 +1049,7 @@ client.subscribe('/user/queue/messages', async (frame) => {
   sortUserList()
 
   if (selectedUser.value?.id === peer.id){
-    selectedUser.value.messages.push(msg) 
-    if (fromId !== meId.value && isPeerOpen(peerId)) {
+     if (fromId !== meId.value && isPeerOpen(peerId)) {
       setLastRead(peerId, msg.createdAt)
     }
     await scrollBottom()
@@ -954,12 +1076,16 @@ const handleSelectUser = async ({ key }) => {
   if (peer.messages.length === 0) {
     await loadHistory(peer.id)
   }
+  hasMoreByPeer.value.set(peer.id, (peer.messages?.length || 0) >= MSG_LIMIT)
   await scrollBottom() 
   const ts = lastIncomingTs(peer) || lastMessageTs(peer) || Date.now()
   setLastRead(peer.id, ts)
   peer.unread = 0
   sortUserList()
-
+ if (!nextCursorByPeer.value.has(peer.id) || nextCursorByPeer.value.get(peer.id) == null) {
+   const oldest = peer.messages?.[0]?.createdAt
+   if (oldest != null) nextCursorByPeer.value.set(peer.id, Number(oldest) - 1)
+ }
 }
 
 // === helpers ===  
@@ -976,6 +1102,12 @@ function nameColor(userId) {
   const hue = h % 360
   return `hsl(${hue}, 65%, 45%)`
 }
+// === helpers ===
+function unwrapHistory(json) {
+  if (Array.isArray(json)) return { items: json, nextCursor: null, hasMore: false }
+  const items = Array.isArray(json?.items) ? json.items : []
+  return { items, nextCursor: json?.nextCursor ?? null, hasMore: !!json?.hasMore }
+} 
 
 function sortUserList() {
   users.value = [...users.value].sort((a, b) => {
@@ -1028,9 +1160,11 @@ const sendMessage = () => {
       groupId: isGroup ? peerId : null,
     };
 
-    selectedUser.value.messages.push(tempMsg);
-
+    if (isPeerOpen(peerId)) setLastRead(peerId, now)
+    bumpPeerTop(selectedUser.value, now)
     if (isGroup) {
+          selectedUser.value.messages.push(tempMsg);
+
       const g = groups.value.find(x => x.id === peerId.substring('group:'.length));
       if (g) g.lastMessage = text;
     } else {
@@ -1145,8 +1279,7 @@ const handleCreateGroup = async () => {
     creating.value = false
   }
 }
-</script> 
-
+</script>  
 <style scoped>
 /* Ant Menu item’ın iki satırı sığdırabilmesi için */
 :deep(.ant-menu-item) {
