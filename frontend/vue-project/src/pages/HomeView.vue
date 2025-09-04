@@ -101,28 +101,36 @@
               </a-dropdown>
             </template>
        </div>
-       
+
         <div ref="scrollPane" style="flex:1;padding:16px;overflow-y:auto">
-            <div v-if="selectedUser && (hasMoreByPeer.get(selectedUser.id) || false)" style="text-align:center;margin-bottom:8px">
-    <a-button size="small" @click="loadOlderMessages(selectedUser.id)" :loading="loadingOlder">
-      Önceki mesajları yükle
-    </a-button>
-  </div>
-          <div v-for="(m, i) in selectedUser.messages" :key="m.id || i" style="margin-bottom:8px;display:flex"
-            :style="{ justifyContent: isMine(m) ? 'flex-end' : 'flex-start' }">
-            <div style="background:#fff;padding:8px 12px;border-radius:8px;max-width:70%">
-              <div v-if="isGroupId(selectedUser?.id)"
+        <!-- Üst-ortada kayan gün etiketi -->
+        <div v-show="floatingDay"
+            class="floating-day">
+          {{ floatingDay }}
+        </div>
+          <div v-if="selectedUser && (hasMoreByPeer.get(selectedUser.id) || false)" style="text-align:center;margin-bottom:8px">
+          <a-button size="small" @click="loadOlderMessages(selectedUser.id)" :loading="loadingOlder">
+            Önceki mesajları yükle
+          </a-button>
+        </div>
+         <div v-for="(m, i) in selectedUser.messages" :key="m.id || i"
+              class="msg-row"
+              :data-ts="m.createdAt"
+              style="margin-bottom:8px;display:flex"
+              :style="{ justifyContent: isMine(m) ? 'flex-end' : 'flex-start' }">
+           <div style="background:#fff;padding:8px 12px;border-radius:8px;max-width:70%">
+             <div v-if="isGroupId(selectedUser?.id)"
                   style="font-weight:600;font-size:12px;margin-bottom:4px"
                   :style="{ color: nameColor(m.fromUserId) }">
-                {{ userNameById(m.fromUserId) }}
-              </div>
-              <div style="white-space:pre-wrap; word-break:break-word;">
-                {{ m.content }}
-              </div>
-              <div style="color:#999;font-size:11px;margin-top:4px">{{ fmtTime(m.createdAt) }}</div>
-            </div>
-          </div>
-        </div>
+               {{ userNameById(m.fromUserId) }}
+             </div>
+             <div style="white-space:pre-wrap; word-break:break-word;">
+               {{ m.content }}
+             </div>
+             <div style="color:#999;font-size:11px;margin-top:4px">{{ fmtTime(m.createdAt) }}</div>
+           </div>
+         </div>
+    </div>
 
         <div style="position:sticky;bottom:0;background:#fff;padding:12px 24px;border-top:1px solid #ddd;z-index:10">
           <a-input-search v-model:value="newMessage" placeholder="Mesaj yaz..." enter-button="Gönder"
@@ -303,7 +311,6 @@ const permFilteredRows = computed(() => {
   if (!q) return permRows.value
   return permRows.value.filter(r => userNameById(r.userId).toLowerCase().includes(q))
 })
- 
 function isAdminUser(userId) {
   const u = allUsersMap.value.get(String(userId))
   const role = String(u?.role || u?.authority || '').toUpperCase()
@@ -619,7 +626,9 @@ onMounted(async () => {
   }
   await loadMyGroups()
   await prefetchGroupHeads()
-
+  const pane = scrollPane.value
+  if (pane) pane.addEventListener('scroll', onPaneScroll, { passive:true })
+  rebuildDayOnNextTick()
 })
 
 const cleanup = []
@@ -627,6 +636,8 @@ onBeforeUnmount(() => {
   if (onBye) window.removeEventListener('beforeunload', onBye)
   if (stomp.value?.active) stomp.value.deactivate()
   cleanup.forEach(fn => { try { fn() } catch {} })
+  const pane = scrollPane.value
+  if (pane) pane.removeEventListener('scroll', onPaneScroll)
 })
 async function prefetchGroupHeads() {
   const me = String(meId.value)
@@ -730,6 +741,7 @@ const handleSelectGroup = async ({ key }) => {
   if (gg) gg.unread = 0
 
   await scrollBottom()
+  await rebuildDayOnNextTick()
 }
 
 async function ensureAllUsersLoaded() {
@@ -871,7 +883,7 @@ async function loadOlderMessages(peerId) {
       }
       
     }
-
+    await rebuildDayOnNextTick()
     // --- pagination flag/cursor güncelle
     hasMoreByPeer.value.set(key,nextCursor ?? null)
     nextCursorByPeer.value.set(key, nextCursor ?? null)
@@ -953,7 +965,9 @@ async function loadHistory(peerId, beforeTs = null) {
   peer.unread = computeUnread(peer);
   hasMoreByPeer.value.set(String(peerId), !!nextCursor || !!hasMore)
   nextCursorByPeer.value.set(String(peerId), nextCursor ?? null)
-  historyReadyByPeer.value.set(String(peerId), true)}
+  historyReadyByPeer.value.set(String(peerId), true)
+  await rebuildDayOnNextTick()
+}
 
 
 async function connectWs () {
@@ -1063,7 +1077,7 @@ client.subscribe('/user/queue/messages', async (frame) => {
   client.onStompError    = (f) => console.error('STOMP error', f.headers, f.body)
   client.onWebSocketError = (e) => console.error('WS error', e)
 
-  stomp.value = client
+  stomp.value = client  
   client.activate()
 }
 
@@ -1078,6 +1092,7 @@ const handleSelectUser = async ({ key }) => {
   }
   hasMoreByPeer.value.set(peer.id, (peer.messages?.length || 0) >= MSG_LIMIT)
   await scrollBottom() 
+  await rebuildDayOnNextTick()
   const ts = lastIncomingTs(peer) || lastMessageTs(peer) || Date.now()
   setLastRead(peer.id, ts)
   peer.unread = 0
@@ -1089,6 +1104,64 @@ const handleSelectUser = async ({ key }) => {
 }
 
 // === helpers ===  
+// --- Kayan gün etiketi state'i ---
+const floatingDay = ref('')
+let measureRaf = 0
+
+function dayLabelFromKey(key) {
+ const today = dayKey(Date.now())
+ if (key === today) return 'Bugün'
+ const yesterday = dayKey(Date.now() - 24*60*60*1000)
+ if (key === yesterday) return 'Dün'
+ const [y,m,d] = key.split('-').map(Number)
+ return new Date(y, m-1, d).toLocaleDateString('tr-TR', { day:'2-digit', month:'short', year:'numeric' })
+}
+
+function updateFloatingDay() {
+ const pane = scrollPane.value
+ if (!pane) return
+ const nodes = pane.querySelectorAll('.msg-row[data-ts]')
+ if (!nodes.length) { floatingDay.value = ''; return }
+ const targetY = pane.scrollTop +8
+ let chosenTs = Number(nodes[0].dataset.ts)
+ for (let i=0;i<nodes.length;i++){
+   const el = nodes[i]
+   if (el.offsetTop <= targetY) chosenTs = Number(el.dataset.ts)
+   else break
+ }
+ floatingDay.value = dayLabelFromKey(dayKey(chosenTs))
+}
+function onPaneScroll(){
+ if (measureRaf) cancelAnimationFrame(measureRaf)
+ measureRaf = requestAnimationFrame(updateFloatingDay)
+}
+async function rebuildDayOnNextTick(){
+ await nextTick()
+ updateFloatingDay()
+}
+
+// YYYY-MM-DD (kullanıcının saat dilimine göre)
+function dayKey(ms) {
+  const d = new Date(Number(ms || Date.now()))
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function dayLabel(key) {
+  const today = dayKey(Date.now())
+  if (key === today) return 'Bugün'
+
+  const yesterday = dayKey(Date.now() - 24 * 60 * 60 * 1000)
+  if (key === yesterday) return 'Dün'
+
+  // Daha eski günler: 12 Eyl 2025 formatı (tr-TR yerelleştirme)
+  const [y, m, d] = key.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  return dt.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 function isGroupId(id) {
   return String(id || '').startsWith('group:')
 }
@@ -1173,7 +1246,7 @@ const sendMessage = () => {
     }
 
     nextTick(() => scrollBottom());
-
+    rebuildDayOnNextTick()
     newMessage.value = '';
   } else {
     console.warn('STOMP bağlı değil.');
@@ -1281,7 +1354,7 @@ const handleCreateGroup = async () => {
 }
 </script>  
 <style scoped>
-/* Ant Menu item’ın iki satırı sığdırabilmesi için */
+/* Ant Menu item’ın iki satırı sığdırabilmesi için */ 
 :deep(.ant-menu-item) {
   height: auto !important;               /* sabit yükseklik yok */
   padding-top: 8px !important;
@@ -1352,4 +1425,21 @@ const handleCreateGroup = async () => {
   font-size: 12px;
   padding: 0 6px;
 }
+ .floating-day{
+  position: sticky;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-block;
+  padding: 4px 10px;
+  background: #e6f4ff;
+  color: #1677ff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid #bae0ff;
+  pointer-events: none;
+}
+
 </style> 
