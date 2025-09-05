@@ -1,0 +1,68 @@
+
+
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:17.5
+    environment:
+      POSTGRES_USER: root_user
+      POSTGRES_PASSWORD: root_secret
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # İki DB oluşturmak için init script
+      - ./db-init/multiple-dbs.sql:/docker-entrypoint-initdb.d/01-multiple-dbs.sql:ro
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.0
+    depends_on:
+      - postgres
+    ports:
+      - "8081:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+
+      # Keycloak → ayrı veritabanı
+      KC_DB: postgres
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: keycloak_secret
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: keycloak_db
+      
+      KC_SPI_EVENTS_LISTENER_EXT_EVENT_HTTP_URL: "http://host.docker.internal:8080/keycloak/webhook"
+      KC_SPI_EVENTS_LISTENER_EXT_EVENT_HTTP_SECRET: "super-secret"
+      KC_SPI_ADMIN_EVENTS_LISTENER_EXT_EVENT_HTTP_URL: "http://host.docker.internal:8080/keycloak/webhook"
+      KC_SPI_ADMIN_EVENTS_LISTENER_EXT_EVENT_HTTP_SECRET: "super-secret"
+      KC_LOG_LEVEL: "INFO,org.keycloak.events:DEBUG,io.phasetwo.keycloak.events:DEBUG"
+  
+    volumes:
+      - ./providers:/opt/keycloak/providers:ro
+    command: ["start-dev"]
+    restart: unless-stopped
+  redpanda:
+    image: redpandadata/redpanda:latest     
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:9092   
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+
