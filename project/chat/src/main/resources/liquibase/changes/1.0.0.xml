@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="
+    http://www.liquibase.org/xml/ns/dbchangelog
+    https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="create-app-user" author="nisa">
+        <createTable tableName="app_user">
+            <column name="id" type="BIGINT">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="keycloak_id" type="VARCHAR(36)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="username" type="VARCHAR(255)">
+                <constraints nullable="false" unique="true"/>
+            </column>
+            <column name="email" type="VARCHAR(320)"/>
+            <column name="first_name" type="VARCHAR(255)"/>
+            <column name="last_name" type="VARCHAR(255)"/>
+            <column name="created_at" type="TIMESTAMP WITH TIME ZONE"/>
+            <column name="last_login_at" type="TIMESTAMP WITH TIME ZONE"/>
+            <column name="role" type="VARCHAR(100)"/>
+        </createTable>
+        <addAutoIncrement tableName="app_user" columnName="id" columnDataType="BIGINT"/>
+    </changeSet>
+</databaseChangeLog>
