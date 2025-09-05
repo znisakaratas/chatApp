@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="
+    http://www.liquibase.org/xml/ns/dbchangelog
+    https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="group-permission" author="nisa">
+        <createTable tableName="group_permission">
+            <column name="group_id" type="BIGINT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="user_id" type="BIGINT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="can_update" type="BOOLEAN" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="can_delete" type="BOOLEAN" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+            <column name="granted_at" type="TIMESTAMP WITH TIME ZONE" defaultValueComputed="CURRENT_TIMESTAMP"/>
+        </createTable>
+
+        <addPrimaryKey tableName="group_permission"
+                       columnNames="group_id,user_id"
+                       constraintName="pk_group_permission"/>
+
+        <addForeignKeyConstraint
+                baseTableName="group_permission" baseColumnNames="group_id"
+                referencedTableName="app_group"  referencedColumnNames="id"
+                onDelete="CASCADE"
+                constraintName="fk_gp_group"/>
+
+        <addForeignKeyConstraint
+                baseTableName="group_permission" baseColumnNames="user_id"
+                referencedTableName="app_user"   referencedColumnNames="id"
+                onDelete="CASCADE"
+                constraintName="fk_gp_user"/>
+
+        <createIndex tableName="group_permission" indexName="idx_gp_user">
+            <column name="user_id"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>
