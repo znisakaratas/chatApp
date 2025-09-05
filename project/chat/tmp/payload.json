@@ -1,0 +1,30 @@
+ {
+  "type": "admin.USER.UPDATE",
+  "details": {
+    "userId": "3e0e574c-57f3-4490-8a1b-0b8df9e79444",
+    "username": "nisa"
+  },
+  "resourcePath": "users/3e0e574c-57f3-4490-8a1b-0b8df9e79444",
+  "representation": {
+    "id": "3e0e574c-57f3-4490-8a1b-0b8df9e79444",
+    "username": "nisa",
+    "firstName": "nisa ",
+    "lastName": "manifest",
+    "email": "nisa@mail.com",
+    "emailVerified": true,
+    "attributes": {},
+    "createdTimestamp": 1755089188611,
+    "enabled": true,
+    "totp": false,
+    "disableableCredentialTypes": [],
+    "requiredActions": [],
+    "notBefore": 0,
+    "access": {
+      "manageGroupMembership": true,
+      "view": true,
+      "mapRoles": true,
+      "impersonate": true,
+      "manage": true
+    }
+  }
+}
